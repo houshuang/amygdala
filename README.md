@@ -26,6 +26,7 @@ If you're building a personal knowledge system, research tool, claim extractor, 
 | **search** | Numpy vector search, SQLite FTS5, hybrid RRF fusion, cross-encoder reranking | +32.5% nDCG with reranking; RRF 4x more robust than convex fusion under embedding degradation |
 | **novelty** | Multi-signal novelty scoring: global + topic-local + centroid specificity + temporal decay + NLI cascade | +17% novel/known separation with centroid specificity; NLI fixes 94% of high-cosine contradictions |
 | **cluster** | Greedy centroid clustering (batch + incremental), complete linkage, pairwise cosine | Incremental matches batch quality at threshold ≥ 0.85, 1.8x faster, zero order sensitivity |
+| **document_similarity** | Document-level thematic similarity using weighted multi-field embeddings | 94% accuracy on human-rated pairs; AUROC=0.930 on 300-pair dataset; ρ=0.818 |
 | **cache** | Persistent SQLite-backed embedding cache | 20K texts: 48s cold → 585ms warm |
 | **index** | SQLite document/chunk storage with hybrid search | Single-file, zero-config, FTS5 built in |
 | **knowledge_map** | Adaptive knowledge probing via Shannon entropy maximization and Bayesian belief propagation | Converges in 8–12 questions on 30-node graphs |
@@ -242,6 +243,54 @@ pairs = extract_pairs(sim_matrix, threshold=0.7,
 
 **Why not HDBSCAN?** We tested both. Similar V-measure (~0.55) on 20 Newsgroups. Both are designed for dedup, not topic discovery. Greedy centroid is simpler, needs no hyperparameter tuning, and works incrementally.
 
+## Document similarity
+
+Find thematically similar documents in a corpus using weighted multi-field embeddings:
+
+```python
+from amygdala import Document, find_similar_documents
+
+docs = [
+    Document(id="art1", texts={"summary": "Sicily's history spans Greek, Roman, and Norman periods.", "claims": "Greeks founded Syracuse in 734 BC."}),
+    Document(id="art2", texts={"summary": "Sicilian Baroque architecture defines the island's cultural identity.", "claims": "Sicilian Baroque is a UNESCO World Heritage style."}),
+    Document(id="art3", texts={"summary": "Python asyncio provides concurrent I/O execution.", "claims": "Event loops manage coroutine scheduling."}),
+]
+
+# Weighted multi-field embedding (best strategy: 94% accuracy, ρ=0.818)
+pairs = find_similar_documents(
+    docs,
+    text_fields={"summary": 0.5, "claims": 0.5},
+    threshold=0.52,  # calibrated for 80% precision, 78% recall
+)
+# → [SimilarityPair(id_a="art1", id_b="art2", score=0.74, field_scores={"summary": 0.78, "claims": 0.65})]
+
+# Single field (simpler, 89% accuracy)
+pairs = find_similar_documents(docs, text_fields="summary", threshold=0.52)
+
+# Full similarity matrix (for clustering, visualization)
+from amygdala import document_similarity_matrix
+ids, matrix = document_similarity_matrix(docs, text_fields={"summary": 0.5, "claims": 0.5})
+```
+
+**Why weighted multi-field?** Embedding summary and claims separately then combining with equal weights (0.5/0.5) outperforms concatenating them into one text (94% vs 89% accuracy). Concatenation lets the longer text dominate; weighted combination preserves the distinct signal geometry of each representation. Any weight split from 35/65 to 65/35 achieves the same result — the ratio isn't sensitive.
+
+Calibrated thresholds from 300 LLM-rated + 18 human-rated article pairs:
+
+| Use case | Threshold | Precision | Recall | F1 |
+|----------|-----------|-----------|--------|-----|
+| Feed ranking (recall-focused) | 0.49 | 71% | 82% | 76% |
+| Briefing card (balanced) | 0.52 | 80% | 78% | 79% |
+| High confidence | 0.55 | 91% | 75% | 82% |
+| Near-duplicate detection | 0.64 | 96% | 73% | 83% |
+
+**What didn't work** (tested and rejected):
+- Topic tag Jaccard: 50% accuracy — useless
+- LLM-as-judge: 78% accuracy, systematically over-rates within-domain similarity
+- Two-stage embed→LLM pipeline: doesn't beat embedding alone
+- Max-sim claim matching: 72% — individual claims too narrow for document-level overlap
+
+See `experiments/document_similarity_design.md` for the full design rationale and `experiments/calibration_document_similarity.md` for experiment details.
+
 ## Knowledge mapping
 
 Adaptive knowledge probing: efficiently map what someone knows about a topic using information theory.
@@ -338,12 +387,13 @@ Every significant design choice was tested in controlled experiments. 21 experim
 | 19 | NFCorpus search? | Hybrid+rerank best (0.333 nDCG). | 3.6K medical docs |
 | 20 | Persistent cache? | 83–452x speedup. Lossless. | 20K embeddings |
 | 21 | All-but-the-top? | Matches Soft-ZCA (+27.4%), simpler math | Domain calibration |
+| 22 | Document-level similarity? | Weighted 0.5×summary+0.5×claims: **94% acc, ρ=0.818**. Beats single-field (89%), concatenation (89%), LLM judge (78%), topic Jaccard (50%). AUROC=0.930 on 300 pairs. | 18 human + 300 LLM + 50 synthetic pairs |
 
 Experiment code is in the `experiments/` directory if you want to reproduce or extend them.
 
 ## Architecture
 
-Nine modules, minimal cross-dependencies:
+Ten modules, minimal cross-dependencies:
 
 ```
 embed.py ──→ cache.py (optional persistent cache)
@@ -353,6 +403,8 @@ search.py ──→ VectorIndex, FTS5Index, HybridSearch, rerank
 novelty.py ──→ uses VectorIndex for neighbor lookup
    │
 cluster.py ──→ standalone (numpy only)
+   │
+document_similarity.py ──→ uses embed.py + cluster.py for multi-field similarity
    │
 index.py ──→ uses search.py (VectorIndex, FTS5) + connect() helper
    │
@@ -371,7 +423,7 @@ Design principles:
 
 ## Tests
 
-136 tests covering all modules:
+147 tests covering all modules:
 
 ```bash
 pip install -e ".[dev]"
