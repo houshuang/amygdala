@@ -27,7 +27,7 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["limbic*", "amygdala*"]
+include = ["limbic*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
