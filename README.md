@@ -2,7 +2,15 @@
 
 **Data curation toolkit: embeddings, search, proposals, and AI-assisted verification.**
 
-Extracted from a Nordic performing arts archive curation project where 10,000+ entities were cleaned across 30+ LLM-assisted sessions. The problems kept recurring — deduplicating people by fuzzy name, merging records with cascading references, tracking which entities an LLM had verified and which it hadn't, staying within API budgets. Limbic is the generalized result: three packages that handle the full pipeline from finding patterns in data to managing the changes to verifying correctness.
+Limbic grew out of the same problems appearing across multiple projects:
+
+- **otak / alif** — a 67K-node claims-first knowledge system where new annotations needed novelty detection ("is this claim already captured?"), clustering for dedup, and cosine+NLI cascade to tell paraphrases from contradictions
+- **petrarca** — a news curation pipeline that needed document-level similarity matching, calibrated thresholds for "related" vs "near-duplicate," and hybrid search across multilingual content
+- **kulturperler** — a Nordic performing arts archive (10,000+ entities) where deduplicating persons required fuzzy matching with veto gates, merging records meant cascade-relinking all performances and credits, and LLM verification of 2,400+ works needed budget control across 30+ audit sessions (~$270 total)
+- **conversation search** — hybrid RRF search over chat history, where the FTS5 query sanitization and cross-encoder reranking patterns were first validated
+- **reading/annotation tools** — novelty scoring and `classify_pairs` to detect when new annotations overlap with existing knowledge
+
+The same patterns kept recurring: deduplicating entities by fuzzy name, merging records with cascading references, tracking what an LLM had verified, staying within API budgets, searching across languages. Limbic is the generalized result: three packages that handle the full pipeline from **finding patterns** in data to **managing the changes** to **verifying correctness**.
 
 ## Three packages, one pipeline
 
@@ -18,8 +26,8 @@ limbic.amygdala          limbic.hippocampus          limbic.cerebellum
  Document similarity       when merging entities)       with auto-escalation)
  Knowledge mapping       Deduplication               Audit logging
  LLM client               (veto-gate filtering)       (JSONL with analysis)
- SQLite helpers          Validation                  Context builder
-                          (composable rules)           (for LLM prompts)
+ Calibration metrics     Validation                  Context builder
+ SQLite helpers            (composable rules)           (for LLM prompts)
                          YAML store
                           (file-locked, atomic)
 ```
@@ -30,14 +38,16 @@ limbic.amygdala          limbic.hippocampus          limbic.cerebellum
 | **limbic.hippocampus** | Manage changes: proposals with review lifecycle, cascade merges, validation | pyyaml |
 | **limbic.cerebellum** | Verify correctness: LLM-assisted batch audits with budget control | (none beyond stdlib) |
 
+Each package has its own detailed README in its directory.
+
 ## Is this for you?
 
 **Good fit:**
-- You have 1K-100K short texts (claims, findings, notes, entity records) and need search, deduplication, or novelty detection
+- You have 1K–100K short texts (claims, findings, notes, entity records) and need search, deduplication, or novelty detection
 - You maintain a dataset where entities reference each other and need to merge duplicates without breaking links
 - You want LLM-assisted data curation with budget control, resumable batches, and audit trails
 - Your corpus is **domain-focused** (e.g., all about one field) where off-the-shelf embeddings struggle to differentiate similar items
-- You need **multilingual** support (especially English + Norwegian, but any language pair that `sentence-transformers` supports)
+- You need **multilingual** support (especially English + Norwegian, but any language pair that sentence-transformers supports)
 - You want numpy-based search without the operational overhead of a vector database
 - You want hybrid search (vector + full-text) with a single `pip install`
 
@@ -67,20 +77,21 @@ pip install -e ".[dev,llm,hippocampus]"
 
 ## limbic.amygdala
 
-**Embedding, search, novelty detection, and clustering for knowledge-dense text corpora.** Optimized for collections of claims, research findings, notes, and annotations -- not generic documents.
+**Embedding, search, novelty detection, and clustering for knowledge-dense text corpora.** Optimized for collections of claims, research findings, notes, and annotations — not generic documents. See [limbic/amygdala/README.md](limbic/amygdala/README.md) for full documentation.
 
 ### What's inside
 
 | Module | What it does | Key numbers |
 |--------|-------------|-------------|
-| **embed** | Sentence embedding with 3 whitening modes, Matryoshka truncation, genericization, persistent cache | 83-452x speedup with SQLite cache; +32% nearest-neighbor separation with Soft-ZCA whitening |
+| **embed** | Sentence embedding with 3 whitening modes, Matryoshka truncation, genericization, persistent cache | 83–452x speedup with SQLite cache; +32% nearest-neighbor separation with Soft-ZCA whitening |
 | **search** | Numpy vector search, SQLite FTS5, hybrid RRF fusion, cross-encoder reranking | +32.5% nDCG with reranking; RRF 4x more robust than convex fusion under embedding degradation |
 | **novelty** | Multi-signal novelty scoring: global + topic-local + centroid specificity + temporal decay + NLI cascade | +17% novel/known separation with centroid specificity; NLI fixes 94% of high-cosine contradictions |
-| **cluster** | Greedy centroid clustering (batch + incremental), complete linkage, pairwise cosine | Incremental matches batch quality at threshold >= 0.85, 1.8x faster, zero order sensitivity |
+| **cluster** | Greedy centroid clustering (batch + incremental), complete linkage, pairwise cosine, confidence-calibrated pair classification | Incremental matches batch quality at threshold >= 0.85, 1.8x faster, zero order sensitivity |
 | **document_similarity** | Document-level thematic similarity using weighted multi-field embeddings | 94% accuracy on human-rated pairs; AUROC=0.930 on 300-pair dataset; rho=0.818 |
-| **cache** | Persistent SQLite-backed embedding cache | 20K texts: 48s cold -> 585ms warm |
+| **calibrate** | Cohen's kappa, LLM judge validation (Bootstrap Validation Protocol), intra-rater reliability | Validates LLM judges against human gold labels |
+| **cache** | Persistent SQLite-backed embedding cache | 20K texts: 48s cold → 585ms warm |
 | **index** | SQLite document/chunk storage with hybrid search | Single-file, zero-config, FTS5 built in |
-| **knowledge_map** | Adaptive knowledge probing via Shannon entropy maximization and Bayesian belief propagation | Converges in 8-12 questions on 30-node graphs |
+| **knowledge_map** | Adaptive knowledge probing via Shannon entropy maximization and Bayesian belief propagation | Converges in 8–12 questions on 30-node graphs |
 | **llm** | Multi-provider LLM client (Gemini, Anthropic, OpenAI) with structured output and retry | Auto-fallback, cost tracking, async + sync |
 
 ### Quick start
@@ -126,7 +137,7 @@ The default model is `paraphrase-multilingual-MiniLM-L12-v2` (384 dimensions). C
 
 #### Whitening for domain-specific corpora
 
-Off-the-shelf embeddings put everything in a narrow cone -- unrelated texts in the same domain score 0.7+ cosine similarity, making it hard to distinguish "similar" from "identical." Whitening spreads the distribution:
+Off-the-shelf embeddings put everything in a narrow cone — unrelated texts in the same domain score 0.7+ cosine similarity, making it hard to distinguish "similar" from "identical." Whitening spreads the distribution:
 
 ```python
 from limbic.amygdala import EmbeddingModel
@@ -149,7 +160,7 @@ Three whitening modes, all opt-in:
 | **All-but-the-top** | `EmbeddingModel(whiten_abt=1)` | +27% NN-gap, simpler math | When you don't want to tune epsilon |
 | **PCA** | `EmbeddingModel(whiten_dims=128)` | +24% NN-gap, reduces dims | When you need dimensionality reduction |
 
-**Don't whiten diverse corpora.** On mixed-domain data, raw embeddings already separate well. Whitening helps when your entire corpus is about one field and everything looks the same to the model. The Karpathy-loop experiment (120 configs) confirmed: **current defaults are rank 1/120** -- whitening is the biggest anti-pattern on diverse data.
+**Don't whiten diverse corpora.** On mixed-domain data, raw embeddings already separate well. Whitening helps when your entire corpus is about one field and everything looks the same to the model. The Karpathy-loop experiment (120 configs) confirmed: **current defaults are rank 1/120** — whitening is the biggest anti-pattern on diverse data.
 
 #### Other embedding features
 
@@ -192,7 +203,7 @@ results = fts.search("text content", limit=10)
 hybrid = HybridSearch(vector_index=vi, fts_index=fts)
 results = hybrid.search(query_vec, "query text", limit=10)
 
-# Cross-encoder reranking -- +32.5% nDCG on top of any search
+# Cross-encoder reranking -- +32.5% nDCG@10 on SciFact
 reranked = rerank("query text", results)  # uses ms-marco-MiniLM-L-6-v2
 ```
 
@@ -283,7 +294,7 @@ pairs = extract_pairs(sim_matrix, threshold=0.7,
                       cross_group_only=True)
 ```
 
-**Why greedy centroid over union-find?** Union-find causes transitive chaining -- at threshold 0.85, it produces clusters of 1,500+ items. Greedy centroid caps naturally at ~50. Discovered this empirically when clustering 27K claims in a knowledge system.
+**Why greedy centroid over union-find?** Union-find causes transitive chaining — at threshold 0.85, it produces clusters of 1,500+ items. Greedy centroid caps naturally at ~50. Discovered this empirically when clustering 27K claims in alif.
 
 **Why not HDBSCAN?** Both tested. Similar V-measure (~0.55) on 20 Newsgroups. Both are designed for dedup, not topic discovery. Greedy centroid is simpler, needs no hyperparameter tuning, and works incrementally.
 
@@ -307,16 +318,9 @@ pairs = find_similar_documents(
     threshold=0.52,  # calibrated for 80% precision, 78% recall
 )
 # -> [SimilarityPair(id_a="art1", id_b="art2", score=0.74, field_scores={"summary": 0.78, "claims": 0.65})]
-
-# Single field (simpler, 89% accuracy)
-pairs = find_similar_documents(docs, text_fields="summary", threshold=0.52)
-
-# Full similarity matrix (for clustering, visualization)
-from limbic.amygdala import document_similarity_matrix
-ids, matrix = document_similarity_matrix(docs, text_fields={"summary": 0.5, "claims": 0.5})
 ```
 
-**Why weighted multi-field?** Embedding summary and claims separately then combining with equal weights (0.5/0.5) outperforms concatenating them into one text (94% vs 89% accuracy). Concatenation lets the longer text dominate; weighted combination preserves the distinct signal geometry of each representation. Any weight split from 35/65 to 65/35 achieves the same result -- the ratio isn't sensitive.
+**Why weighted multi-field?** Embedding summary and claims separately then combining with equal weights (0.5/0.5) outperforms concatenating them into one text (94% vs 89% accuracy). Concatenation lets the longer text dominate; weighted combination preserves the distinct signal geometry of each representation. Developed and calibrated for petrarca's news article similarity matching.
 
 Calibrated thresholds from 300 LLM-rated + 18 human-rated article pairs:
 
@@ -326,14 +330,6 @@ Calibrated thresholds from 300 LLM-rated + 18 human-rated article pairs:
 | Briefing card (balanced) | 0.52 | 80% | 78% | 79% |
 | High confidence | 0.55 | 91% | 75% | 82% |
 | Near-duplicate detection | 0.64 | 96% | 73% | 83% |
-
-**What didn't work** (tested and rejected):
-- Topic tag Jaccard: 50% accuracy -- useless
-- LLM-as-judge: 78% accuracy, systematically over-rates within-domain similarity
-- Two-stage embed-then-LLM pipeline: doesn't beat embedding alone
-- Max-sim claim matching: 72% -- individual claims too narrow for document-level overlap
-
-See `experiments/document_similarity_design.md` for the full design rationale and `experiments/calibration_document_similarity.md` for experiment details.
 
 ### Knowledge mapping
 
@@ -395,7 +391,7 @@ Applies all best practices automatically: WAL journal mode, 30s busy timeout, NO
 
 ### Cross-lingual support
 
-The multilingual model achieves **MRR=1.0** on Norwegian-to-English retrieval out of the box. No translation step needed -- embed Norwegian and English text into the same space and search across languages natively.
+The multilingual model achieves **MRR=1.0** on Norwegian-to-English retrieval out of the box. No translation step needed — embed Norwegian and English text into the same space and search across languages natively.
 
 ```python
 from limbic.amygdala import EmbeddingModel
@@ -410,7 +406,7 @@ similarity = float(v_no @ v_en)  # -> 0.86
 
 ## limbic.hippocampus
 
-**Proposal-based data change management with cascade merges, deduplication, and validation.** For datasets where entities reference each other and changes need human review before application.
+**Proposal-based data change management with cascade merges, deduplication, and validation.** For datasets where entities reference each other and changes need human review before application. See [limbic/hippocampus/README.md](limbic/hippocampus/README.md) for full documentation.
 
 ### Quick start
 
@@ -475,17 +471,14 @@ changes = apply_merge(
 # changes: ["Relinked performance/301.credits: 99 -> 42", "Deleted person/99"]
 ```
 
-The `data_loader`, `data_writer`, and `data_deleter` are callback functions you provide -- the cascade engine is storage-agnostic. For YAML files, use the built-in `YAMLStore`.
-
 ### Deduplication with veto gates
 
-Candidate duplicate pairs (from fuzzy matching, embedding distance, etc.) pass through a chain of veto gates. Any gate can reject a pair. This keeps false-positive control explicit and auditable:
+Candidate duplicate pairs pass through a chain of veto gates. Any gate can reject a pair:
 
 ```python
 from limbic.hippocampus import VetoMatcher, CandidatePair, ExclusionList
 from limbic.hippocampus import exact_field, initial_match, no_conflict, gender_check
 
-# Build a gate chain
 matcher = VetoMatcher(
     gates=[
         initial_match("name"),           # first letter must match
@@ -493,10 +486,9 @@ matcher = VetoMatcher(
         no_conflict("wikidata_id"),      # conflicting external IDs = not same person
         gender_check("name", male_names={"erik", "hans"}, female_names={"anna", "grete"}),
     ],
-    exclusions=ExclusionList(),  # known false positives
+    exclusions=ExclusionList(),
 )
 
-# Filter candidates
 pair = CandidatePair(
     id_a="42", id_b="99",
     fields_a={"name": "Henrik Ibsen", "birth_year": 1828},
@@ -525,7 +517,6 @@ validator = Validator([
                          condition_label="category is opera"),
 ])
 
-# entities: {type: {id: data}}
 result = validator.validate(entities)
 print(result.summary())  # "3 errors, 1 warnings"
 ```
@@ -556,7 +547,7 @@ store.backup("person", "42")             # timestamped backup
 
 ## limbic.cerebellum
 
-**LLM-assisted batch verification with budget tracking, resumable state, and multi-tier orchestration.** For when you need an LLM to verify thousands of records but want to control costs and resume interrupted runs.
+**LLM-assisted batch verification with budget tracking, resumable state, and multi-tier orchestration.** For when you need an LLM to verify thousands of records but want to control costs and resume interrupted runs. See [limbic/cerebellum/README.md](limbic/cerebellum/README.md) for full documentation.
 
 ### Quick start: batch processing
 
@@ -611,7 +602,6 @@ def fast_triage(items):
     """Tier 1: Gemini Flash, ~$0.001/item."""
     results = []
     for item in items:
-        # ... fast LLM check ...
         results.append(VerificationResult(
             item_id=item["id"],
             status="verified",     # or "flagged" to escalate
@@ -625,7 +615,6 @@ def deep_verify(items):
     """Tier 2: Claude Sonnet, ~$0.05/item."""
     results = []
     for item in items:
-        # ... thorough LLM verification ...
         results.append(VerificationResult(
             item_id=item["id"],
             status="verified",
@@ -643,7 +632,6 @@ orchestrator = TieredOrchestrator(
     state_store=StateStore(Path("audit_state.json")),
 )
 
-# Run with auto-escalation: flagged items go from triage to deep
 results = orchestrator.run(
     items=all_items,
     id_fn=lambda x: x["id"],
@@ -652,7 +640,6 @@ results = orchestrator.run(
     escalate=True,
 )
 
-# Check progress
 status = orchestrator.status(all_ids=["1", "2", "3"])
 print(status.summary())
 ```
@@ -683,7 +670,6 @@ summary = summarize_logs(entries)
 
 # Extract operations grouped by type (with dedup)
 ops = extract_operations(entries, op_types=["fix_name", "merge"])
-# -> {"fix_name": [...], "merge": [...]}
 ```
 
 ### Context builder
@@ -732,7 +718,7 @@ Every significant design choice in limbic.amygdala was tested in controlled expe
 | 19 | NFCorpus search? | Hybrid+rerank best (0.333 nDCG). | 3.6K medical docs |
 | 20 | Persistent cache? | 83-452x speedup. Lossless. | 20K embeddings |
 | 21 | All-but-the-top? | Matches Soft-ZCA (+27.4%), simpler math | Domain calibration |
-| 22 | Document-level similarity? | Weighted 0.5 x summary + 0.5 x claims: **94% acc, rho=0.818**. Beats single-field (89%), concatenation (89%), LLM judge (78%), topic Jaccard (50%). AUROC=0.930 on 300 pairs. | 18 human + 300 LLM + 50 synthetic pairs |
+| 22 | Document-level similarity? | Weighted 0.5×summary + 0.5×claims: **94% acc, rho=0.818**. Beats single-field (89%), concatenation (89%), LLM judge (78%), topic Jaccard (50%). AUROC=0.930 on 300 pairs. | 18 human + 300 LLM + 50 synthetic pairs |
 
 Experiment code is in the `experiments/` directory if you want to reproduce or extend them.
 
@@ -757,19 +743,46 @@ limbic/
     |                                 ExclusionList)              extract_operations)
   index.py -> search + connect()                                    |
     |                               validate.py                 context.py
-  knowledge_map.py (pure algo)       (Validator, Rule,           (ContextBuilder,
+  calibrate.py                       (Validator, Rule,           (ContextBuilder,
     |                                 composable checks)          build_batch_context)
-  knowledge_map_gen.py -> llm.py
+  knowledge_map.py (pure algo)
     |                               store.py
-  llm.py (Gemini/Anthropic/OpenAI)   (YAMLStore, file-locked)
+  knowledge_map_gen.py -> llm.py     (YAMLStore, file-locked)
+    |
+  llm.py (Gemini/Anthropic/OpenAI)
 ```
 
 Design principles:
 - **No external services.** Everything runs locally. SQLite for persistence, numpy for vectors, JSON/YAML for state.
 - **Opt-in complexity.** Basic usage needs only numpy + sentence-transformers. YAML support, LLM features, and orchestration are all opt-in via extras.
-- **Storage-agnostic.** Cascade merges, validation, and batch processing use callback functions -- bring your own storage backend.
+- **Storage-agnostic.** Cascade merges, validation, and batch processing use callback functions — bring your own storage backend.
 - **Numpy arrays everywhere.** All embedding operations return `np.ndarray` for interop.
 - **Two-tier caching.** In-memory LRU (fast path) + optional SQLite persistent cache.
+
+## How the packages compose
+
+The three packages are independent but designed to work together:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        Data Curation Pipeline                       │
+│                                                                     │
+│  1. FIND PATTERNS (amygdala)                                        │
+│     embed entities → cluster → find duplicate candidates            │
+│     score novelty → detect new items vs existing                    │
+│     hybrid search → retrieve relevant context                      │
+│                          │                                          │
+│  2. MANAGE CHANGES (hippocampus)                                    │
+│     veto-gate filter candidate pairs → create merge proposals       │
+│     cascade merge accepted pairs → relink all references            │
+│     validate dataset → catch broken refs, missing fields            │
+│                          │                                          │
+│  3. VERIFY CORRECTNESS (cerebellum)                                 │
+│     batch-process entities through LLM → triage + deep verify       │
+│     track budget → resume on restart → audit log everything         │
+│     flagged items → create proposals for human review               │
+└─────────────────────────────────────────────────────────────────────┘
+```
 
 ## Tests
 
@@ -792,10 +805,11 @@ CI runs on every PR via GitHub Actions.
 
 Limbic powers search, data curation, and knowledge management in several systems:
 
-- A **Nordic performing arts archive** (10,000+ entities) -- proposals for all data changes, cascade merges for deduplicating persons/works, tiered LLM verification of 2,400+ works across 30+ audit sessions, veto-gate dedup of fuzzy-matched person names. Total audit cost: ~$270.
-- A **67K-node claims-first knowledge system** -- embedding, novelty detection, hybrid search, clustering (canonical finding synthesis), and cosine+NLI cascade for deduplication. Podcast fact-checking found that structured search changes 31% of verdicts vs. flat embedding search alone.
-- A **reading and annotation system** -- novelty scoring and `classify_pairs` to detect when new annotations overlap with existing knowledge.
-- A **conversation search tool** -- hybrid RRF search over chat history.
+- **otak / alif** — a **67K-node claims-first knowledge system** using embedding, novelty detection, hybrid search, clustering (canonical finding synthesis), and cosine+NLI cascade for deduplication. Podcast fact-checking showed that structured search changes 31% of verdicts vs. flat embedding search alone.
+- **petrarca** — a **news curation pipeline** using document similarity to find related articles, calibrated thresholds for feed ranking vs near-duplicate detection, and hybrid search across multilingual content.
+- **kulturperler** — a **Nordic performing arts archive** (10,000+ entities) using proposals for all data changes, cascade merges for deduplicating persons/works, tiered LLM verification of 2,400+ works across 30+ audit sessions, veto-gate dedup of fuzzy-matched person names. Total audit cost: ~$270.
+- A **reading and annotation system** using novelty scoring and `classify_pairs` to detect when new annotations overlap with existing knowledge.
+- A **conversation search tool** using hybrid RRF search over chat history.
 
 ## License
 
