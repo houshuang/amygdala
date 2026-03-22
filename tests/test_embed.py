@@ -6,7 +6,7 @@ import time
 import numpy as np
 import pytest
 
-from amygdala.embed import EmbeddingModel, DEFAULT_MODEL
+from limbic.amygdala.embed import EmbeddingModel, DEFAULT_MODEL
 
 
 @pytest.fixture(scope="module")

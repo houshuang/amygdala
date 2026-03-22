@@ -196,6 +196,12 @@ def rerank(query: str, results: list[Result],
     """
     if not results:
         return results
+    empty = [r for r in results if not r.content]
+    if empty:
+        raise ValueError(
+            f"rerank() requires results with content, but {len(empty)}/{len(results)} "
+            f"have empty content (e.g. from VectorIndex). Hydrate content before reranking."
+        )
     if model_name not in _rerank_cache:
         from sentence_transformers import CrossEncoder
         _rerank_cache[model_name] = CrossEncoder(model_name)

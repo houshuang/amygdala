@@ -3,8 +3,8 @@
 import numpy as np
 import pytest
 
-from amygdala import EmbeddingModel
-from amygdala.document_similarity import (
+from limbic.amygdala import EmbeddingModel
+from limbic.amygdala.document_similarity import (
     Document,
     SimilarityPair,
     find_similar_documents,

@@ -122,26 +122,41 @@ def reference_exists(
 
 def no_orphans(
     entity_type: str,
-    referenced_by: list[tuple[str, str]],
+    referenced_by: list[tuple],
     *,
     severity: str = "warning",
 ) -> Rule:
     """Entity must be referenced by at least one entity of the given types.
 
-    referenced_by is a list of (source_type, field_name) pairs that should
-    reference entities of entity_type.
+    referenced_by is a list of tuples:
+      - (source_type, field_name) for scalar or flat-list references
+      - (source_type, field_name, sub_field) for nested dict-list references
+        e.g. ('performance', 'credits', 'person_id') matches credits[].person_id
     """
+    def _refs_match(ref_val, eid_str: str, sub_field: str | None) -> bool:
+        if ref_val is None:
+            return False
+        if sub_field is not None:
+            if isinstance(ref_val, list):
+                return any(
+                    isinstance(item, dict) and str(item.get(sub_field)) == eid_str
+                    for item in ref_val
+                )
+            return False
+        if isinstance(ref_val, list):
+            return any(str(v) == eid_str for v in ref_val)
+        return str(ref_val) == eid_str
+
     def check(etype: str, eid: str, data: dict, all_entities: dict) -> list[str]:
-        for src_type, src_field in referenced_by:
+        eid_str = str(eid)
+        for ref_tuple in referenced_by:
+            src_type, src_field = ref_tuple[0], ref_tuple[1]
+            sub_field = ref_tuple[2] if len(ref_tuple) > 2 else None
             src_entities = all_entities.get(src_type, {})
             for src_data in src_entities.values():
-                ref_val = src_data.get(src_field)
-                if ref_val is not None and str(ref_val) == str(eid):
+                if _refs_match(src_data.get(src_field), eid_str, sub_field):
                     return []
-                # Also check lists
-                if isinstance(ref_val, list) and any(str(v) == str(eid) for v in ref_val):
-                    return []
-        return [f"orphan: not referenced by any {', '.join(t for t, _ in referenced_by)}"]
+        return [f"orphan: not referenced by any {', '.join(t[0] for t in referenced_by)}"]
     return Rule(name=f"orphan_{entity_type}", check_fn=check,
                 entity_type=entity_type, severity=severity)
 

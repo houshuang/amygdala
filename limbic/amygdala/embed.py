@@ -86,7 +86,7 @@ class EmbeddingModel:
         self._persistent_cache = None
         if cache_path is not None:
             from .cache import PersistentEmbeddingCache
-            self._persistent_cache = PersistentEmbeddingCache(str(cache_path), model_name)
+            self._persistent_cache = PersistentEmbeddingCache(str(cache_path), model_name, truncate_dim)
 
     def _load_model(self):
         if self._model is None:

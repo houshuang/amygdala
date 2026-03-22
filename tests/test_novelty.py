@@ -3,9 +3,9 @@
 import numpy as np
 import pytest
 
-from amygdala.embed import EmbeddingModel
-from amygdala.search import VectorIndex
-from amygdala.novelty import novelty_score, batch_novelty, _adaptive_k, corpus_centroid
+from limbic.amygdala.embed import EmbeddingModel
+from limbic.amygdala.search import VectorIndex
+from limbic.amygdala.novelty import novelty_score, batch_novelty, _adaptive_k, corpus_centroid
 
 
 @pytest.fixture(scope="module")

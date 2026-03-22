@@ -111,12 +111,13 @@ def next_probe(
 
     Returns dict with {node_id, node, information_gain, question_type} or None if converged.
     """
-    # Only consider nodes we're genuinely uncertain about (belief in 0.15–0.85).
-    # Nodes outside this range are already confident enough — asking wastes a question.
+    # Only consider nodes we're genuinely uncertain about (belief in 0.05–0.85).
+    # Floor of 0.05 matches the minimum prior from init_beliefs, ensuring all
+    # initialized nodes (including high-obscurity ones) are eligible for probing.
     candidates = [
         n for n in graph.nodes
         if n["id"] not in state.assessed
-        and 0.15 <= state.beliefs.get(n["id"], 0.3) <= 0.85
+        and 0.05 <= state.beliefs.get(n["id"], 0.3) <= 0.85
     ]
     if not candidates:
         return None

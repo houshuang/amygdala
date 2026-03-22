@@ -3,8 +3,8 @@
 import numpy as np
 import pytest
 
-from amygdala.embed import EmbeddingModel
-from amygdala.search import VectorIndex, FTS5Index, HybridSearch, Result
+from limbic.amygdala.embed import EmbeddingModel
+from limbic.amygdala.search import VectorIndex, FTS5Index, HybridSearch, Result
 
 
 TEST_DOCS = [

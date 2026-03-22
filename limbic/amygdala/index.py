@@ -100,17 +100,18 @@ class Index:
         self._rebuild_fts()
 
     def add_claims(self, claims: list[dict], collection: str = "claims"):
-        """Add claims. Each needs 'id', 'content', optional 'metadata'/'embedding'."""
+        """Add claims (idempotent). Each needs 'id', 'content', optional 'metadata'/'embedding'."""
         for c in claims:
             dp = f"claim:{c['id']}"
             now = time.time()
+            self.conn.execute("DELETE FROM chunks WHERE doc_path = ?", (dp,))
             self.conn.execute(
                 "INSERT OR REPLACE INTO documents (path,mtime,collection,metadata,indexed_at) VALUES (?,?,?,?,?)",
                 (dp, now, collection, json.dumps(c.get("metadata", {})), now))
             emb = c.get("embedding")
             blob = emb.tobytes() if isinstance(emb, np.ndarray) else None
             self.conn.execute(
-                "INSERT OR REPLACE INTO chunks (doc_path,content,metadata,collection,embedding) VALUES (?,?,?,?,?)",
+                "INSERT INTO chunks (doc_path,content,metadata,collection,embedding) VALUES (?,?,?,?,?)",
                 (dp, c["content"], json.dumps(c.get("metadata", {})), collection, blob))
         self.conn.commit()
         self._rebuild_fts()

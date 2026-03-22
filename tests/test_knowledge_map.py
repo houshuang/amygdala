@@ -1,7 +1,7 @@
 """Tests for knowledge_map module — adaptive knowledge probing algorithm."""
 
 import pytest
-from amygdala.knowledge_map import (
+from limbic.amygdala.knowledge_map import (
     KnowledgeGraph, BeliefState, init_beliefs, next_probe,
     update_beliefs, coverage_report, is_converged, _entropy,
     _total_entropy, FAMILIARITY_LEVELS, calibrate_beliefs,

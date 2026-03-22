@@ -191,21 +191,44 @@ def _relink_field(
     if spec.is_array:
         if not isinstance(value, list):
             return False
+        tid = _coerce_id(target_id)
         if spec.sub_field:
-            for item in value:
-                if isinstance(item, dict) and _coerce_id(item.get(spec.sub_field)) == sid:
-                    item[spec.sub_field] = _coerce_to_type(item[spec.sub_field], target_id)
+            # Check if target already present — if so, just remove source entries
+            has_target = any(
+                isinstance(item, dict) and _coerce_id(item.get(spec.sub_field)) == tid
+                for item in value
+            )
+            if has_target:
+                new_list = [
+                    item for item in value
+                    if not (isinstance(item, dict) and _coerce_id(item.get(spec.sub_field)) == sid)
+                ]
+                if len(new_list) != len(value):
+                    data[spec.field] = new_list
                     changed = True
+            else:
+                for item in value:
+                    if isinstance(item, dict) and _coerce_id(item.get(spec.sub_field)) == sid:
+                        item[spec.sub_field] = _coerce_to_type(item[spec.sub_field], target_id)
+                        changed = True
         else:
-            new_list = []
-            for v in value:
-                if _coerce_id(v) == sid:
-                    new_list.append(_coerce_to_type(v, target_id))
+            has_target = any(_coerce_id(v) == tid for v in value)
+            if has_target:
+                # Target already present — just remove source entries
+                new_list = [v for v in value if _coerce_id(v) != sid]
+                if len(new_list) != len(value):
+                    data[spec.field] = new_list
                     changed = True
-                else:
-                    new_list.append(v)
-            if changed:
-                data[spec.field] = new_list
+            else:
+                new_list = []
+                for v in value:
+                    if _coerce_id(v) == sid:
+                        new_list.append(_coerce_to_type(v, target_id))
+                        changed = True
+                    else:
+                        new_list.append(v)
+                if changed:
+                    data[spec.field] = new_list
     else:
         if _coerce_id(value) == sid:
             data[spec.field] = _coerce_to_type(value, target_id)

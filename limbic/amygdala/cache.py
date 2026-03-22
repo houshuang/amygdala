@@ -26,8 +26,8 @@ class PersistentEmbeddingCache:
     Or use via EmbeddingModel(cache_path="cache.db") for automatic integration.
     """
 
-    def __init__(self, db_path: str, model_name: str):
-        self.model_name = model_name
+    def __init__(self, db_path: str, model_name: str, truncate_dim: int | None = None):
+        self.model_name = self._build_key(model_name, truncate_dim)
         self.conn = connect(db_path)
         self.conn.execute("""
             CREATE TABLE IF NOT EXISTS embedding_cache (
@@ -39,6 +39,12 @@ class PersistentEmbeddingCache:
             )
         """)
         self.conn.commit()
+
+    @staticmethod
+    def _build_key(model_name: str, truncate_dim: int | None) -> str:
+        if truncate_dim is not None:
+            return f"{model_name}:dim={truncate_dim}"
+        return model_name
 
     @staticmethod
     def _hash(text: str) -> str:
