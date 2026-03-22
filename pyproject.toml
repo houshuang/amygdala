@@ -18,8 +18,12 @@ llm = [
     "anthropic",
     "openai",
 ]
+hippocampus = [
+    "pyyaml>=6.0",
+]
 dev = [
     "pytest>=7.0",
+    "pyyaml>=6.0",
 ]
 
 [tool.setuptools.packages.find]
