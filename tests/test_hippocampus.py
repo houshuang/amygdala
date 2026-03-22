@@ -553,3 +553,23 @@ class TestCascadeWithStore:
         assert perf["work_id"] == 11
 
         assert len(mods) >= 2
+
+
+# ===========================================================================
+# Regression tests for P1 bugs
+# ===========================================================================
+
+class TestProposalIdUniqueness:
+    """Regression: proposals created in the same second must get unique IDs."""
+
+    def test_rapid_creation_unique_ids(self, proposal_store):
+        ids = set()
+        for i in range(5):
+            p = proposal_store.create_modify(
+                "person/1",
+                {"name": f"Name{i}"},
+                f"Change {i}",
+                f"Reason {i}",
+            )
+            ids.add(p.id)
+        assert len(ids) == 5, f"Expected 5 unique IDs, got {len(ids)}: {ids}"

@@ -117,8 +117,8 @@ class Index:
 
     def _rebuild_fts(self):
         self.conn.execute("DELETE FROM chunks_fts")
-        for r in self.conn.execute("SELECT rowid, content FROM chunks").fetchall():
-            self.conn.execute("INSERT INTO chunks_fts (rowid, content) VALUES (?,?)", (r["rowid"], r["content"]))
+        for r in self.conn.execute("SELECT rowid as rid, content FROM chunks").fetchall():
+            self.conn.execute("INSERT INTO chunks_fts (rowid, content) VALUES (?,?)", (r["rid"], r["content"]))
         self.conn.commit()
 
     def _build_vector_index(self, collection: str | None = None) -> VectorIndex:
@@ -135,7 +135,18 @@ class Index:
             vi.add(ids, vecs)
         return vi
 
+    @staticmethod
+    def _sanitize_query(query: str) -> str:
+        """Sanitize query for FTS5 MATCH syntax."""
+        import re
+        tokens = re.findall(r'[\w]+', query, re.UNICODE)
+        tokens = [t for t in tokens if len(t) > 1 and not t.isdigit()]
+        return " OR ".join(tokens) if tokens else ""
+
     def _fts_search(self, query: str, limit: int = 10, collection: str | None = None) -> list[Result]:
+        query = self._sanitize_query(query)
+        if not query:
+            return []
         try:
             q = "SELECT c.id, c.content, c.metadata, rank FROM chunks_fts f JOIN chunks c ON c.rowid = f.rowid WHERE chunks_fts MATCH ?"
             params: list = [query]

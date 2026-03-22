@@ -99,10 +99,10 @@ async def _call_openai(model_id, sys, user, schema, max_tok, **kw):
 _PROVIDERS = {"anthropic": _call_anthropic, "gemini": _call_gemini, "openai": _call_openai}
 
 
-async def _retry_call(fn, args, retries=MAX_RETRIES):
+async def _retry_call(fn, args, retries=MAX_RETRIES, **kwargs):
     for attempt in range(retries + 1):
         try:
-            return await fn(*args)
+            return await fn(*args, **kwargs)
         except Exception as e:
             if _is_retryable(e) and attempt < retries:
                 await asyncio.sleep(BACKOFF_BASE * (4 ** attempt) + random.uniform(0, 1))

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ast
 import shutil
+import uuid
 from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from pathlib import Path
@@ -153,7 +154,7 @@ def _save_yaml(path: Path, data: dict[str, Any]) -> None:
 # ---------------------------------------------------------------------------
 
 def _generate_id() -> str:
-    return f"prop_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    return f"prop_{datetime.now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:6]}"
 
 
 def _safe_filename(proposal_id: str, title: str) -> str:

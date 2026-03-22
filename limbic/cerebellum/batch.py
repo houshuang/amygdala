@@ -92,17 +92,19 @@ class StateStore:
         tmp.rename(self._path)
 
     def update_item(self, item_id: str, status: str, **kwargs: Any) -> None:
-        """Thread-safe update for a single item."""
+        """Thread-safe update for a single item. Merges with existing data."""
         self._lock_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock_path.touch(exist_ok=True)
         with open(self._lock_path) as lock_fd:
             fcntl.flock(lock_fd, fcntl.LOCK_EX)
             state = self.load()
-            state.items[str(item_id)] = {
+            existing = state.items.get(str(item_id), {})
+            existing.update({
                 "status": status,
                 "ts": datetime.now().isoformat(),
                 **kwargs,
-            }
+            })
+            state.items[str(item_id)] = existing
             self.save(state)
 
     def get_pending(self, all_ids: list[str], done_statuses: Optional[set[str]] = None) -> list[str]:

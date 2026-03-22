@@ -529,3 +529,33 @@ class TestTimeoutFor:
             scale_fn=lambda _: 0.1,  # would give 6, but base is 60
         )
         assert result == 60
+
+
+# ===========================================================================
+# Regression tests for P1 bugs
+# ===========================================================================
+
+class TestEscalationPreservesContext:
+    """Regression: escalation must preserve tier-1 metadata, not overwrite it."""
+
+    def test_update_item_merges(self, tmp_path):
+        store = StateStore(tmp_path / "state.json")
+        store.save(BatchState())
+
+        # Simulate tier-1 completion with rich metadata
+        store.update_item("item1", "needs_review",
+                          confidence=0.45, tier="fast",
+                          findings=["suspicious attribution"])
+        state = store.load()
+        assert state.items["item1"]["confidence"] == 0.45
+        assert state.items["item1"]["findings"] == ["suspicious attribution"]
+
+        # Simulate escalation -- should merge, not overwrite
+        store.update_item("item1", "pending", escalated_from="fast")
+        state = store.load()
+        assert state.items["item1"]["status"] == "pending"
+        assert state.items["item1"]["escalated_from"] == "fast"
+        # Prior metadata must survive
+        assert state.items["item1"]["confidence"] == 0.45
+        assert state.items["item1"]["findings"] == ["suspicious attribution"]
+        assert state.items["item1"]["tier"] == "fast"

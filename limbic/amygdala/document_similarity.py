@@ -62,7 +62,7 @@ def find_similar_documents(
     model: EmbeddingModel | None = None,
 
     # Thresholds
-    threshold: float = 0.40,
+    threshold: float = 0.52,
     max_pairs: int | None = None,
 ) -> list[SimilarityPair]:
     """Find similar document pairs using weighted multi-field embeddings.
