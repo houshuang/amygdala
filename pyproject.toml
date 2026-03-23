@@ -18,12 +18,16 @@ llm = [
     "anthropic",
     "openai",
 ]
+bayesian = [
+    "pgmpy>=1.0",
+]
 hippocampus = [
     "pyyaml>=6.0",
 ]
 dev = [
     "pytest>=7.0",
     "pyyaml>=6.0",
+    "pgmpy>=1.0",
 ]
 
 [tool.setuptools.packages.find]

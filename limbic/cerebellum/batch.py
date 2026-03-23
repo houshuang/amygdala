@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import fcntl
 import json
 import logging
+import sqlite3
 import time
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -46,89 +46,149 @@ class BatchState:
 
 
 # ---------------------------------------------------------------------------
-# StateStore
+# StateStore (SQLite-backed)
 # ---------------------------------------------------------------------------
 
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS items (
+    item_id TEXT PRIMARY KEY,
+    status TEXT NOT NULL,
+    cost REAL DEFAULT 0.0,
+    ts TEXT NOT NULL,
+    metadata TEXT DEFAULT '{}'
+);
+CREATE TABLE IF NOT EXISTS run_state (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+"""
+
+
 class StateStore:
-    """Persistent JSON state with atomic writes and file locking."""
+    """Persistent SQLite-backed state with WAL mode for concurrent access.
+
+    Replaces the previous JSON+flock implementation. Same public API.
+    """
 
     def __init__(self, state_file: Path):
         self._path = Path(state_file)
-        self._lock_path = self._path.with_suffix(".lock")
+        # Accept .json paths for backward compatibility — use .db instead
+        if self._path.suffix == ".json":
+            self._path = self._path.with_suffix(".db")
+        self._path.parent.mkdir(parents=True, exist_ok=True)
+        self._conn = sqlite3.connect(str(self._path), timeout=30)
+        self._conn.row_factory = sqlite3.Row
+        if str(self._path) != ":memory:":
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA synchronous=NORMAL")
+        self._conn.execute("PRAGMA busy_timeout=30000")
+        self._conn.executescript(_SCHEMA)
+        # Initialize run_state defaults
+        self._conn.execute(
+            "INSERT OR IGNORE INTO run_state (key, value) VALUES ('total_cost', '0.0')")
+        self._conn.execute(
+            "INSERT OR IGNORE INTO run_state (key, value) VALUES ('batches_run', '0')")
+        self._conn.execute(
+            "INSERT OR IGNORE INTO run_state (key, value) VALUES ('started_at', ?)",
+            (datetime.now().isoformat(),))
+        self._conn.commit()
 
     @property
     def path(self) -> Path:
         return self._path
 
+    def _get_run_val(self, key: str, default: str = "0") -> str:
+        row = self._conn.execute(
+            "SELECT value FROM run_state WHERE key = ?", (key,)
+        ).fetchone()
+        return row["value"] if row else default
+
     def load(self) -> BatchState:
-        """Load state from disk, or return fresh state if missing."""
-        if self._path.exists():
-            with open(self._path) as f:
-                raw = json.load(f)
-            state = BatchState()
-            state.items = raw.get("items", {})
-            state.total_cost = raw.get("total_cost", 0.0)
-            state.batches_run = raw.get("batches_run", 0)
-            state.started_at = raw.get("started_at", state.started_at)
-            return state
-        return BatchState()
+        """Load full state into a BatchState object."""
+        state = BatchState()
+        state.total_cost = float(self._get_run_val("total_cost", "0.0"))
+        state.batches_run = int(self._get_run_val("batches_run", "0"))
+        state.started_at = self._get_run_val("started_at", state.started_at)
+        for row in self._conn.execute("SELECT * FROM items").fetchall():
+            meta = json.loads(row["metadata"])
+            state.items[row["item_id"]] = {
+                "status": row["status"],
+                "cost": row["cost"],
+                "ts": row["ts"],
+                **meta,
+            }
+        return state
 
     def save(self, state: BatchState) -> None:
-        """Atomic write: write to tmp file then rename."""
-        self._path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self._path.with_suffix(".tmp")
-        with open(tmp, "w") as f:
-            json.dump(
-                {
-                    "items": state.items,
-                    "total_cost": state.total_cost,
-                    "batches_run": state.batches_run,
-                    "started_at": state.started_at,
-                },
-                f,
-                indent=2,
-                ensure_ascii=False,
-            )
-        tmp.rename(self._path)
+        """Write a full BatchState back to SQLite."""
+        self._conn.execute(
+            "INSERT OR REPLACE INTO run_state (key, value) VALUES ('total_cost', ?)",
+            (str(state.total_cost),))
+        self._conn.execute(
+            "INSERT OR REPLACE INTO run_state (key, value) VALUES ('batches_run', ?)",
+            (str(state.batches_run),))
+        self._conn.execute(
+            "INSERT OR REPLACE INTO run_state (key, value) VALUES ('started_at', ?)",
+            (state.started_at,))
+        # Sync items
+        for item_id, info in state.items.items():
+            status = info.get("status", "unknown")
+            cost = info.get("cost", 0.0)
+            ts = info.get("ts", datetime.now().isoformat())
+            meta = {k: v for k, v in info.items() if k not in ("status", "cost", "ts")}
+            self._conn.execute(
+                "INSERT OR REPLACE INTO items (item_id, status, cost, ts, metadata) VALUES (?,?,?,?,?)",
+                (item_id, status, cost, ts, json.dumps(meta)))
+        self._conn.commit()
 
     def update_item(self, item_id: str, status: str, **kwargs: Any) -> None:
-        """Thread-safe update for a single item. Merges with existing data.
+        """Atomic update for a single item. Concurrent-safe via SQLite WAL.
 
         If cost= is passed, it is also added to total_cost.
         """
-        self._lock_path.parent.mkdir(parents=True, exist_ok=True)
-        self._lock_path.touch(exist_ok=True)
-        with open(self._lock_path) as lock_fd:
-            fcntl.flock(lock_fd, fcntl.LOCK_EX)
-            state = self.load()
-            existing = state.items.get(str(item_id), {})
-            existing.update({
-                "status": status,
-                "ts": datetime.now().isoformat(),
-                **kwargs,
-            })
-            state.items[str(item_id)] = existing
-            if "cost" in kwargs:
-                state.total_cost += kwargs["cost"]
-            self.save(state)
+        item_id = str(item_id)
+        cost = kwargs.pop("cost", 0.0)
+        ts = datetime.now().isoformat()
+        meta = json.dumps(kwargs)
+
+        # Merge with existing metadata
+        existing = self._conn.execute(
+            "SELECT metadata FROM items WHERE item_id = ?", (item_id,)
+        ).fetchone()
+        if existing:
+            merged = json.loads(existing["metadata"])
+            merged.update(kwargs)
+            meta = json.dumps(merged)
+
+        self._conn.execute(
+            "INSERT OR REPLACE INTO items (item_id, status, cost, ts, metadata) VALUES (?,?,?,?,?)",
+            (item_id, status, cost, ts, meta))
+        if cost:
+            self._conn.execute(
+                "UPDATE run_state SET value = CAST(CAST(value AS REAL) + ? AS TEXT) WHERE key = 'total_cost'",
+                (cost,))
+        self._conn.commit()
 
     def get_pending(self, all_ids: list[str], done_statuses: Optional[set[str]] = None) -> list[str]:
         """Return IDs from all_ids that have not been processed."""
         if done_statuses is None:
             done_statuses = {"done", "verified", "applied", "skipped"}
-        state = self.load()
-        return [
-            id_ for id_ in all_ids
-            if state.items.get(str(id_), {}).get("status") not in done_statuses
-        ]
+        ph = ",".join("?" * len(done_statuses))
+        done_ids = {
+            row[0] for row in self._conn.execute(
+                f"SELECT item_id FROM items WHERE status IN ({ph})",
+                list(done_statuses),
+            ).fetchall()
+        }
+        return [id_ for id_ in all_ids if str(id_) not in done_ids]
 
     def get_status_counts(self) -> dict[str, int]:
         """Summary of item statuses."""
-        state = self.load()
         counts: dict[str, int] = {}
-        for info in state.items.values():
-            s = info.get("status", "unknown")
-            counts[s] = counts.get(s, 0) + 1
+        for row in self._conn.execute(
+            "SELECT status, COUNT(*) as cnt FROM items GROUP BY status"
+        ).fetchall():
+            counts[row["status"]] = row["cnt"]
         return counts
 
 

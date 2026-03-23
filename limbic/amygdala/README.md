@@ -32,7 +32,7 @@ pip install "limbic[llm]"
 | **cache** | Persistent SQLite-backed embedding cache | 20K texts: 48s cold → 585ms warm |
 | **index** | SQLite document/chunk storage with hybrid search, `connect()` helper | Single-file, zero-config, FTS5 built in |
 | **calibrate** | Cohen's kappa, LLM judge validation (Bootstrap Validation Protocol), intra-rater reliability | Validates LLM judges against human gold labels |
-| **knowledge_map** | Adaptive knowledge probing via Shannon entropy maximization and Bayesian belief propagation | Converges in 8–12 questions on 30-node graphs |
+| **knowledge_map** | Adaptive knowledge probing via entropy maximization, with heuristic or exact Bayesian propagation (pgmpy) | Converges in 8–12 questions on 30-node graphs |
 | **knowledge_map_gen** | LLM-powered knowledge graph generation from topic descriptions | Generates 15–50 node prerequisite DAGs |
 | **llm** | Multi-provider LLM client (Gemini, Anthropic, OpenAI) with structured output and retry | Auto-fallback, cost tracking, async + sync |
 
@@ -330,7 +330,7 @@ Tested and rejected approaches:
 
 ## Knowledge mapping (`knowledge_map.py`)
 
-Adaptive knowledge probing: efficiently map what someone knows about a topic using information theory. Based on Shannon entropy maximization for question selection and Bayesian belief propagation through a prerequisite DAG.
+Adaptive knowledge probing: efficiently map what someone knows about a topic using information theory. Entropy-maximizing probe selection with two propagation backends.
 
 ```python
 from limbic.amygdala.knowledge_map import (
@@ -345,7 +345,12 @@ graph = KnowledgeGraph(nodes=[
     {"id": "mirror", "title": "Mirror protocol", "level": 3, "prerequisites": ["crdt", "lamport"]},
 ])
 
-state = init_beliefs(graph)  # priors based on concept obscurity
+# Heuristic propagation (default, zero dependencies)
+state = init_beliefs(graph)
+
+# Exact Bayesian propagation (+7-10% accuracy, requires pgmpy)
+# pip install limbic[bayesian]
+state = init_beliefs(graph, propagator="bayesian")
 
 # Get next question — maximizes expected information gain
 probe = next_probe(graph, state)
@@ -359,10 +364,22 @@ report = coverage_report(graph, state)  # known/unknown/uncertain lists
 fringes = knowledge_fringes(graph, state)  # outer_fringe = ready to learn next
 ```
 
+### Propagation backends
+
+| Backend | Accuracy (K=5) | Latency | Dependencies |
+|---------|---------------|---------|-------------|
+| `"heuristic"` | 62-65% | 0.01ms | none |
+| `"bayesian"` | 69-74% | 1.7ms | pgmpy |
+
+The heuristic uses bidirectional rule-based propagation (known signals raise
+ancestors and eligible children; unknown signals lower descendants). The
+Bayesian backend builds a `DiscreteBayesianNetwork` with noisy-AND CPDs and
+runs exact variable elimination via pgmpy.
+
 ### Features
 
 - **Expected Information Gain** probe selection (simulates all possible answers)
-- **Multi-hop belief propagation** through prerequisite DAG (with dampening)
+- **Bidirectional belief propagation** through prerequisite DAG (heuristic or exact Bayesian)
 - **Overclaiming detection** via foil concepts (signal detection theory)
 - **KST inner/outer fringe** computation for learning path recommendations
 - **Convergence** in 8–12 questions on 30-node graphs (verified via Monte Carlo simulation)

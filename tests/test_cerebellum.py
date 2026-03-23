@@ -55,15 +55,14 @@ class TestStateStore:
         assert loaded.total_cost == 1.23
         assert loaded.batches_run == 5
 
-    def test_atomic_write_no_partial(self, tmp_path):
+    def test_persistence(self, tmp_path):
         store = StateStore(tmp_path / "state.json")
         state = BatchState()
         state.items["x"] = {"status": "done"}
         store.save(state)
 
-        # tmp file should not linger
-        assert not (tmp_path / "state.tmp").exists()
-        assert (tmp_path / "state.json").exists()
+        # SQLite db should exist (auto-renamed from .json to .db)
+        assert (tmp_path / "state.db").exists()
 
     def test_update_item(self, tmp_path):
         store = StateStore(tmp_path / "state.json")
