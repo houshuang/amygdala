@@ -37,6 +37,35 @@ FAMILIARITY_LEVELS = {
 _DAMPEN = 0.8
 
 
+def _find_cycle(by_id: dict[str, dict]) -> str | None:
+    """Return a node ID involved in a cycle, or None if the graph is a DAG.
+
+    Uses DFS with white(0)/gray(1)/black(2) coloring.
+    """
+    color: dict[str, int] = {nid: 0 for nid in by_id}
+
+    def _dfs(nid: str) -> str | None:
+        color[nid] = 1  # gray — in progress
+        for prereq in by_id[nid].get("prerequisites", []):
+            if prereq not in color:
+                continue
+            if color[prereq] == 1:
+                return prereq  # back edge → cycle
+            if color[prereq] == 0:
+                found = _dfs(prereq)
+                if found is not None:
+                    return found
+        color[nid] = 2  # black — done
+        return None
+
+    for nid in by_id:
+        if color[nid] == 0:
+            found = _dfs(nid)
+            if found is not None:
+                return found
+    return None
+
+
 @dataclass
 class KnowledgeGraph:
     """A DAG of concepts with optional prerequisites and metadata."""
@@ -53,6 +82,9 @@ class KnowledgeGraph:
         for n in self.nodes:
             for prereq in n.get("prerequisites", []):
                 self._children.setdefault(prereq, []).append(n["id"])
+        cycle_node = _find_cycle(self._by_id)
+        if cycle_node is not None:
+            raise ValueError(f"Prerequisite cycle detected involving node {cycle_node!r}")
 
     def get(self, node_id: str) -> dict | None:
         return self._by_id.get(node_id)

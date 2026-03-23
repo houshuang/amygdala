@@ -137,8 +137,8 @@ def graph_from_dict(data: dict) -> KnowledgeGraph:
 
 
 def _validate_nodes(nodes: list[dict]) -> list[dict]:
-    """Ensure nodes have required fields and valid prerequisites."""
-    ids = {n["id"] for n in nodes}
+    """Ensure nodes have required fields, valid prerequisites, and no cycles."""
+    ids = {n["id"] for n in nodes if "id" in n}
     validated = []
     for n in nodes:
         if "id" not in n or "title" not in n:
@@ -148,7 +148,26 @@ def _validate_nodes(nodes: list[dict]) -> list[dict]:
         n.setdefault("obscurity", 3)
         n["prerequisites"] = [p for p in n.get("prerequisites", []) if p in ids and p != n["id"]]
         validated.append(n)
+    # Break cycles by removing back edges (LLMs don't always respect DAG constraints)
+    _break_cycles(validated)
     return validated
+
+
+def _break_cycles(nodes: list[dict]) -> None:
+    """Remove prerequisite edges that create cycles. Mutates nodes in place."""
+    by_id = {n["id"]: n for n in nodes}
+    while True:
+        from .knowledge_map import _find_cycle
+        cycle_node = _find_cycle(by_id)
+        if cycle_node is None:
+            break
+        # Remove the last prerequisite of the cycle node to break the cycle
+        prereqs = by_id[cycle_node].get("prerequisites", [])
+        if prereqs:
+            removed = prereqs.pop()
+            log.warning("Broke cycle: removed prerequisite %s -> %s", cycle_node, removed)
+        else:
+            break
 
 
 def check_graph_quality(graph) -> list[dict]:

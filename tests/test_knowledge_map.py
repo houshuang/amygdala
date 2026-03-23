@@ -252,17 +252,14 @@ class TestPropagation:
         update_beliefs(g, state, "a", "none")  # should not change b
         assert state.beliefs["b"] == original_b
 
-    def test_multihop_cycle_safety(self):
-        """Graph with a cycle should not infinite-loop."""
-        g = KnowledgeGraph(nodes=[
-            {"id": "x", "title": "X", "level": 1, "prerequisites": ["z"]},
-            {"id": "y", "title": "Y", "level": 2, "prerequisites": ["x"]},
-            {"id": "z", "title": "Z", "level": 3, "prerequisites": ["y"]},
-        ])
-        state = init_beliefs(g, prior_fn=lambda n: 0.5)
-        # Should not raise or hang
-        update_beliefs(g, state, "x", "none")
-        assert state.beliefs["y"] <= 0.2
+    def test_cycle_rejected_at_construction(self):
+        """Graph with a cycle should be rejected."""
+        with pytest.raises(ValueError, match="cycle"):
+            KnowledgeGraph(nodes=[
+                {"id": "x", "title": "X", "level": 1, "prerequisites": ["z"]},
+                {"id": "y", "title": "Y", "level": 2, "prerequisites": ["x"]},
+                {"id": "z", "title": "Z", "level": 3, "prerequisites": ["y"]},
+            ])
 
 
 # ── EIG Strategy ───────────────────────────────────────
