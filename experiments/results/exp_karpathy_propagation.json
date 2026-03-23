@@ -1,0 +1,125 @@
+{
+  "experiment": "karpathy_propagation",
+  "date": "2026-03-23 09:55",
+  "n_trials": 30,
+  "k_values": [
+    3,
+    5,
+    8
+  ],
+  "topologies": [
+    "wide_tree",
+    "dense_dag",
+    "chain_20",
+    "diamond_5x3"
+  ],
+  "current_params": {
+    "dampen": 0.8,
+    "down_ceiling": 0.1,
+    "up_floor": 0.8,
+    "prereq_threshold": 0.5,
+    "prereq_base": 0.85,
+    "prereq_dampen_exp": 0.5
+  },
+  "optimized_params": {
+    "dampen": 0.8,
+    "down_ceiling": 0.1,
+    "up_floor": 0.7,
+    "prereq_threshold": 0.6,
+    "prereq_base": 0.8,
+    "prereq_dampen_exp": 0.5
+  },
+  "bayesian_ceiling": 0.7209,
+  "current_mean": 0.6683,
+  "optimized_mean": 0.6626,
+  "improvement": -0.0057,
+  "gap_closed_pct": -10.8,
+  "per_topology": {
+    "wide_tree_K3": {
+      "current": 0.6111,
+      "optimized": 0.6111,
+      "bayesian": 0.6278,
+      "gap": 0.0167
+    },
+    "wide_tree_K5": {
+      "current": 0.6479,
+      "optimized": 0.6479,
+      "bayesian": 0.7,
+      "gap": 0.0521
+    },
+    "wide_tree_K8": {
+      "current": 0.6744,
+      "optimized": 0.6744,
+      "bayesian": 0.8103,
+      "gap": 0.1359
+    },
+    "dense_dag_K3": {
+      "current": 0.6314,
+      "optimized": 0.6314,
+      "bayesian": 0.6039,
+      "gap": -0.0275
+    },
+    "dense_dag_K5": {
+      "current": 0.6844,
+      "optimized": 0.6844,
+      "bayesian": 0.6844,
+      "gap": -0.0
+    },
+    "dense_dag_K8": {
+      "current": 0.65,
+      "optimized": 0.6472,
+      "bayesian": 0.7417,
+      "gap": 0.0944
+    },
+    "chain_20_K3": {
+      "current": 0.6059,
+      "optimized": 0.6059,
+      "bayesian": 0.6902,
+      "gap": 0.0843
+    },
+    "chain_20_K5": {
+      "current": 0.6578,
+      "optimized": 0.6578,
+      "bayesian": 0.7067,
+      "gap": 0.0489
+    },
+    "chain_20_K8": {
+      "current": 0.7306,
+      "optimized": 0.7306,
+      "bayesian": 0.7917,
+      "gap": 0.0611
+    },
+    "diamond_5x3_K3": {
+      "current": 0.6949,
+      "optimized": 0.6949,
+      "bayesian": 0.7282,
+      "gap": 0.0333
+    },
+    "diamond_5x3_K5": {
+      "current": 0.6758,
+      "optimized": 0.6758,
+      "bayesian": 0.7364,
+      "gap": 0.0606
+    },
+    "diamond_5x3_K8": {
+      "current": 0.7167,
+      "optimized": 0.7167,
+      "bayesian": 0.8292,
+      "gap": 0.1125
+    }
+  },
+  "bayesian_per_topology": {
+    "wide_tree_K3": 0.6278,
+    "wide_tree_K5": 0.7,
+    "wide_tree_K8": 0.8103,
+    "dense_dag_K3": 0.6039,
+    "dense_dag_K5": 0.6844,
+    "dense_dag_K8": 0.7417,
+    "chain_20_K3": 0.6902,
+    "chain_20_K5": 0.7067,
+    "chain_20_K8": 0.7917,
+    "diamond_5x3_K3": 0.7282,
+    "diamond_5x3_K5": 0.7364,
+    "diamond_5x3_K8": 0.8292
+  }
+}
