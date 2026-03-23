@@ -389,13 +389,14 @@ def _propagate_prereqs_met(
 
 
 def _global_prereqs_sweep(graph: KnowledgeGraph, state: BeliefState) -> None:
-    """Global pass: check every unassessed node to see if its prerequisites
-    are now confident enough to raise it. Runs until no further changes.
+    """Global pass: check every unassessed node based on prerequisite state.
 
-    This catches cases where multiple assessed nodes combine to make a
-    previously-uncertain node's prerequisites all high-confidence.
+    - If all prereqs are confident (>= 0.5): raise toward P(known|prereqs_known)
+    - If any prereq is low (< 0.2): lower toward P(known|prereq_unknown)
+
+    Runs until convergence (max 3 iterations).
     """
-    for _ in range(3):  # max 3 iterations to converge
+    for _ in range(3):
         changed = False
         for node in graph.nodes:
             nid = node["id"]
@@ -406,11 +407,19 @@ def _global_prereqs_sweep(graph: KnowledgeGraph, state: BeliefState) -> None:
                 continue
             prereq_beliefs = [state.beliefs.get(p, 0.3) for p in prereqs]
             min_prereq = min(prereq_beliefs)
+            current = state.beliefs.get(nid, 0.3)
+
             if min_prereq >= 0.5:
+                # All prereqs likely known → raise
                 base = 0.5 + 0.35 * ((min_prereq - 0.5) / 0.5)
-                current = state.beliefs.get(nid, 0.3)
                 if base > current:
                     state.beliefs[nid] = base
+                    changed = True
+            elif min_prereq < 0.2:
+                # At least one prereq likely unknown → lower
+                ceiling = 0.15 + 0.35 * (min_prereq / 0.2)  # maps 0.0→0.15, 0.2→0.50
+                if ceiling < current:
+                    state.beliefs[nid] = ceiling
                     changed = True
         if not changed:
             break
