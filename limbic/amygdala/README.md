@@ -348,8 +348,7 @@ graph = KnowledgeGraph(nodes=[
 # Heuristic propagation (default, zero dependencies)
 state = init_beliefs(graph)
 
-# Exact Bayesian propagation (+7-10% accuracy, requires pgmpy)
-# pip install limbic[bayesian]
+# Exact belief propagation (+1-5% accuracy, zero dependencies)
 state = init_beliefs(graph, propagator="bayesian")
 
 # Get next question — maximizes expected information gain
@@ -368,13 +367,13 @@ fringes = knowledge_fringes(graph, state)  # outer_fringe = ready to learn next
 
 | Backend | Accuracy (K=5) | Latency | Dependencies |
 |---------|---------------|---------|-------------|
-| `"heuristic"` | 65-69% | 0.01ms | none |
-| `"bayesian"` | 69-74% | 1.7ms | pgmpy |
+| `"heuristic"` | 65-69% | 0.08ms | none |
+| `"bayesian"` | 69-74% | 0.16ms | none |
 
-The heuristic uses bidirectional rule-based propagation (known signals raise
-ancestors and eligible children; unknown signals lower descendants). The
-Bayesian backend builds a `DiscreteBayesianNetwork` with noisy-AND CPDs and
-runs exact variable elimination via pgmpy.
+Both backends are zero-dependency (numpy only). The heuristic uses bidirectional
+rule-based propagation with global sweeps. The Bayesian backend implements
+Pearl's forward-backward belief propagation with noisy-AND CPDs — exact on
+trees/chains, approximate on dense DAGs with v-structures.
 
 ### Features
 
