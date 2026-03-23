@@ -320,18 +320,16 @@ def _propagate_heuristic(
 ) -> None:
     """Rule-based bidirectional propagation through prerequisite DAG.
 
-    Unknown signal -> lower descendants (if I don't know a prereq, I probably
-    don't know what depends on it).
-    Known signal -> raise ancestors (if I know something advanced, I probably
-    know its prerequisites) AND raise children whose prerequisites are now
-    met (if I know all prereqs for X, I'm more likely to know X).
-    Assessed nodes are never overwritten.
+    After the local update, does a global sweep: re-checks all nodes to see
+    if prerequisites-met propagation should fire based on cumulative evidence.
+    This approximates pgmpy's global inference pass.
     """
     if familiarity in ("none", "heard_of"):
         _propagate_down(graph, state, node_id, ceiling=0.1, depth=0, visited=set())
     if familiarity in ("solid", "deep"):
         _propagate_up(graph, state, node_id, floor=0.8, depth=0, visited=set())
-        _propagate_prereqs_met(graph, state, node_id, depth=0, visited=set())
+    # Global sweep: re-propagate prereqs-met from ALL high-belief nodes
+    _global_prereqs_sweep(graph, state)
 
 
 def _propagate_down(
@@ -388,6 +386,34 @@ def _propagate_prereqs_met(
             current = state.beliefs.get(child_id, 0.3)
             state.beliefs[child_id] = max(current, floor)
             _propagate_prereqs_met(graph, state, child_id, depth + 1, visited)
+
+
+def _global_prereqs_sweep(graph: KnowledgeGraph, state: BeliefState) -> None:
+    """Global pass: check every unassessed node to see if its prerequisites
+    are now confident enough to raise it. Runs until no further changes.
+
+    This catches cases where multiple assessed nodes combine to make a
+    previously-uncertain node's prerequisites all high-confidence.
+    """
+    for _ in range(3):  # max 3 iterations to converge
+        changed = False
+        for node in graph.nodes:
+            nid = node["id"]
+            if nid in state.assessed:
+                continue
+            prereqs = graph.prerequisites_of(nid)
+            if not prereqs:
+                continue
+            prereq_beliefs = [state.beliefs.get(p, 0.3) for p in prereqs]
+            min_prereq = min(prereq_beliefs)
+            if min_prereq >= 0.5:
+                base = 0.5 + 0.35 * ((min_prereq - 0.5) / 0.5)
+                current = state.beliefs.get(nid, 0.3)
+                if base > current:
+                    state.beliefs[nid] = base
+                    changed = True
+        if not changed:
+            break
 
 
 # ── Bayesian propagation (pgmpy) ──────────────────────────
