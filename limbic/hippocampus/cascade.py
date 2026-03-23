@@ -23,12 +23,23 @@ class ReferenceSpec:
     If is_array is True, the field is a list of IDs (or a list of dicts each
     containing a sub-field with the ID). When sub_field is set, the reference
     lives inside array-of-dict entries (e.g., credits[].person_id).
+
+    on_conflict controls what happens when merging entities and both source
+    and target already exist in an array-of-dict field:
+      - "drop" (default): remove source entries; target keeps its metadata.
+        Use when row metadata is scoped to the row (e.g., credits[].role
+        belongs to that specific credit, not to the referenced person).
+      - "keep_both": rewrite source entries to point at target, preserving
+        both rows. Use when each row carries independent data that should
+        survive the merge (e.g., multiple appearances with different roles).
+    For flat ID arrays (no sub_field), duplicates are always collapsed.
     """
     source_type: str
     field: str
     target_type: str
     is_array: bool = False
     sub_field: str | None = None
+    on_conflict: str = "drop"  # "drop" | "keep_both"
 
 
 @dataclass
@@ -193,13 +204,12 @@ def _relink_field(
             return False
         tid = _coerce_id(target_id)
         if spec.sub_field:
-            # If target already present, remove source entries (target keeps its metadata).
-            # If target not present, rewrite source entries to point at target.
             has_target = any(
                 isinstance(item, dict) and _coerce_id(item.get(spec.sub_field)) == tid
                 for item in value
             )
-            if has_target:
+            if has_target and spec.on_conflict == "drop":
+                # Drop source entries — row metadata is scoped to the row
                 new_list = [
                     item for item in value
                     if not (isinstance(item, dict) and _coerce_id(item.get(spec.sub_field)) == sid)
@@ -208,6 +218,7 @@ def _relink_field(
                     data[spec.field] = new_list
                     changed = True
             else:
+                # No conflict, or keep_both: rewrite source entries to point at target
                 for item in value:
                     if isinstance(item, dict) and _coerce_id(item.get(spec.sub_field)) == sid:
                         item[spec.sub_field] = _coerce_to_type(item[spec.sub_field], target_id)
