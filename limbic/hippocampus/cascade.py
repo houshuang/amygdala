@@ -193,12 +193,22 @@ def _relink_field(
             return False
         tid = _coerce_id(target_id)
         if spec.sub_field:
-            # Check if target already present — if so, just remove source entries
-            has_target = any(
-                isinstance(item, dict) and _coerce_id(item.get(spec.sub_field)) == tid
-                for item in value
-            )
-            if has_target:
+            # Check if target already present — if so, merge metadata then remove source
+            target_entry = None
+            for item in value:
+                if isinstance(item, dict) and _coerce_id(item.get(spec.sub_field)) == tid:
+                    target_entry = item
+                    break
+            if target_entry is not None:
+                # Merge non-ID fields from source entries into target
+                source_entries = [
+                    item for item in value
+                    if isinstance(item, dict) and _coerce_id(item.get(spec.sub_field)) == sid
+                ]
+                for src_entry in source_entries:
+                    for k, v in src_entry.items():
+                        if k != spec.sub_field and k not in target_entry:
+                            target_entry[k] = v
                 new_list = [
                     item for item in value
                     if not (isinstance(item, dict) and _coerce_id(item.get(spec.sub_field)) == sid)

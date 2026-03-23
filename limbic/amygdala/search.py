@@ -45,6 +45,10 @@ class VectorIndex:
         """Add embeddings to the index. Will be L2-normalized internally."""
         if embeddings.ndim == 1:
             embeddings = embeddings.reshape(1, -1)
+        if len(ids) != embeddings.shape[0]:
+            raise ValueError(
+                f"ids length ({len(ids)}) must match embeddings rows ({embeddings.shape[0]})"
+            )
         norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
         norms[norms == 0] = 1.0
         normalized = embeddings / norms
@@ -168,9 +172,26 @@ class HybridSearch:
             content_map[r.id] = r.content
             metadata_map[r.id] = r.metadata
 
+        top_ids = sorted(scores, key=scores.get, reverse=True)[:limit]
+
+        # Hydrate content for vector-only hits from FTS backing store
+        missing = [id_ for id_ in top_ids if id_ not in content_map]
+        if missing:
+            ph = ",".join("?" * len(missing))
+            try:
+                rows = self.fts_index.conn.execute(
+                    f"SELECT id, content, metadata FROM fts_docs WHERE id IN ({ph})",
+                    missing,
+                ).fetchall()
+                for r in rows:
+                    content_map[r["id"]] = r["content"]
+                    metadata_map[r["id"]] = json.loads(r["metadata"])
+            except Exception:
+                pass
+
         return [Result(id=id_, score=scores[id_], content=content_map.get(id_, ""),
                        metadata=metadata_map.get(id_, {}), source="hybrid")
-                for id_ in sorted(scores, key=scores.get, reverse=True)[:limit]]
+                for id_ in top_ids]
 
 
 _rerank_cache: dict[str, "CrossEncoder"] = {}

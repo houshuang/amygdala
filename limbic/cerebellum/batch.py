@@ -92,7 +92,10 @@ class StateStore:
         tmp.rename(self._path)
 
     def update_item(self, item_id: str, status: str, **kwargs: Any) -> None:
-        """Thread-safe update for a single item. Merges with existing data."""
+        """Thread-safe update for a single item. Merges with existing data.
+
+        If cost= is passed, it is also added to total_cost.
+        """
         self._lock_path.parent.mkdir(parents=True, exist_ok=True)
         self._lock_path.touch(exist_ok=True)
         with open(self._lock_path) as lock_fd:
@@ -105,6 +108,8 @@ class StateStore:
                 **kwargs,
             })
             state.items[str(item_id)] = existing
+            if "cost" in kwargs:
+                state.total_cost += kwargs["cost"]
             self.save(state)
 
     def get_pending(self, all_ids: list[str], done_statuses: Optional[set[str]] = None) -> list[str]:
@@ -216,6 +221,7 @@ class BatchProcessor:
                 continue
 
             batch_cost = 0.0
+            budget_hit = False
             for ir in item_results:
                 self.store.update_item(ir.id, ir.status, cost=ir.cost, **ir.metadata)
                 batch_cost += ir.cost
@@ -223,10 +229,19 @@ class BatchProcessor:
                     result.errors += 1
                 else:
                     result.processed += 1
+                # Per-item budget check to avoid overshoot
+                if self.max_cost is not None and (cumulative_cost + batch_cost) >= self.max_cost:
+                    budget_hit = True
+                    break
 
             cumulative_cost += batch_cost
             result.total_cost += batch_cost
             processed_so_far += len(batch)
+
+            if budget_hit:
+                log.info("Budget limit $%.2f reached mid-batch (spent $%.2f). Stopping.",
+                         self.max_cost, cumulative_cost)
+                break
 
             # Update aggregate state
             state = self.store.load()

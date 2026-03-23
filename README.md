@@ -218,7 +218,7 @@ reranked = rerank("query text", results)  # uses ms-marco-MiniLM-L-6-v2
 | SciFact (5K docs, 300 queries) | 0.484 | 0.638 | 0.674 | **0.641** |
 | NFCorpus (3.6K docs) | 0.235 | 0.126 | 0.286 | **0.333** |
 
-FTS5 dominates on scientific text (exact terminology matters); vector dominates on medical queries (semantic matching matters). Hybrid + rerank wins on both.
+FTS5 dominates on scientific text (exact terminology matters); vector dominates on medical queries (semantic matching matters). Reranking helps on NFCorpus (+16%) but slightly hurts on SciFact (-5%), likely because scientific terminology already gives exact matches high FTS5 scores.
 
 ### Novelty detection
 

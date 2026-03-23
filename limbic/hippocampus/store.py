@@ -44,10 +44,11 @@ def _file_lock(path: Path, lock_dir: Path | None = None):
     fd = open(lock_path, "w")
     try:
         fcntl.flock(fd.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        yield
     except BlockingIOError:
         fd.close()
         raise RuntimeError(f"File {path} is locked by another process")
+    try:
+        yield
     finally:
         fcntl.flock(fd.fileno(), fcntl.LOCK_UN)
         fd.close()

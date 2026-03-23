@@ -43,7 +43,12 @@ class KnowledgeGraph:
     nodes: list[dict]  # {id, title, description?, level?, obscurity?, prerequisites?}
 
     def __post_init__(self):
-        self._by_id = {n["id"]: n for n in self.nodes}
+        self._by_id: dict[str, dict] = {}
+        for n in self.nodes:
+            nid = n["id"]
+            if nid in self._by_id:
+                raise ValueError(f"Duplicate node ID: {nid!r}")
+            self._by_id[nid] = n
         self._children: dict[str, list[str]] = {}
         for n in self.nodes:
             for prereq in n.get("prerequisites", []):

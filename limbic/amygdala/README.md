@@ -161,7 +161,7 @@ reranked = rerank("query text", results)  # uses ms-marco-MiniLM-L-6-v2
 | SciFact (5K docs, 300 queries) | 0.484 | 0.638 | 0.674 | **0.641** |
 | NFCorpus (3.6K docs) | 0.235 | 0.126 | 0.286 | **0.333** |
 
-FTS5 dominates on scientific text (exact terminology matters); vector dominates on medical queries (semantic matching matters). Hybrid + rerank wins on both.
+FTS5 dominates on scientific text (exact terminology matters); vector dominates on medical queries (semantic matching matters). Reranking helps on NFCorpus (+16%) but slightly hurts on SciFact (-5%), likely because scientific terminology already gives exact matches high FTS5 scores.
 
 ---
 
@@ -208,7 +208,8 @@ result = nli_classify("Education improves outcomes", "Education has no effect")
 # -> {"label": "contradiction", "contradiction": 0.92, ...}
 
 # Batch classification with cosine + NLI cascade
-pairs_result = classify_pairs(texts, embeddings, high_thresh=0.88, low_thresh=0.72)
+# texts: list of (text_a, text_b) pairs; scores: cosine similarities
+pairs_result = classify_pairs(texts, scores, known_threshold=0.88, extends_threshold=0.72)
 ```
 
 94% accuracy on high-cosine contradictions. Fixes cases where cosine alone would classify contradictions as duplicates.
@@ -260,9 +261,10 @@ pairs = extract_pairs(sim_matrix, threshold=0.7,
 ```python
 from limbic.amygdala import classify_pairs_with_confidence, format_for_eval_harness
 
-# Classify pairs using cosine + NLI cascade with per-label metrics
-result = classify_pairs_with_confidence(texts, embeddings,
-                                         high_thresh=0.88, low_thresh=0.72)
+# Classify pairs with confidence-based labels and per-label metrics
+# pairs: list of (idx_a, idx_b, cosine_score) from extract_pairs()
+result = classify_pairs_with_confidence(pairs, texts,
+                                         confident_threshold=0.75, reject_threshold=0.30)
 
 # Format for evaluation harness
 eval_data = format_for_eval_harness(result)

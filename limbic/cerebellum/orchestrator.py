@@ -151,7 +151,7 @@ class TieredOrchestrator:
                     break
 
             # Wrap the tier's process_fn to produce ItemResults for BatchProcessor
-            def _make_process_fn(t: VerificationTier):
+            def _make_process_fn(t: VerificationTier, store: StateStore):
                 def _process(batch: list[Any]) -> list[ItemResult]:
                     vresults = t.process_fn(batch)
                     # Tag each result with the tier name
@@ -159,7 +159,17 @@ class TieredOrchestrator:
                         vr.tier = t.name
                     tier_results = all_results.setdefault(t.name, [])
                     tier_results.extend(vresults)
-                    return [vr.to_item_result() for vr in vresults]
+                    # Append to tier_history so status() can report per-tier progress
+                    item_results = []
+                    for vr in vresults:
+                        ir = vr.to_item_result()
+                        state = store.load()
+                        existing = state.items.get(vr.item_id, {})
+                        history = existing.get("tier_history", [])
+                        history.append({"tier": t.name, "status": vr.status})
+                        ir.metadata["tier_history"] = history
+                        item_results.append(ir)
+                    return item_results
                 return _process
 
             processor = BatchProcessor(
@@ -167,7 +177,7 @@ class TieredOrchestrator:
                 max_cost=remaining_budget,
                 batch_size=batch_size,
             )
-            batch_result = processor.process(current_items, _make_process_fn(tier), id_fn)
+            batch_result = processor.process(current_items, _make_process_fn(tier, self.store), id_fn)
             cumulative_cost += batch_result.total_cost
 
             # Auto-escalation: collect flagged items for the next tier
@@ -195,11 +205,21 @@ class TieredOrchestrator:
         tier_counts: dict[str, dict[str, int]] = {}
 
         for item_id, info in state.items.items():
-            tier = info.get("tier", "unknown")
-            status = info.get("status", "unknown")
-            if tier not in tier_counts:
-                tier_counts[tier] = {}
-            tier_counts[tier][status] = tier_counts[tier].get(status, 0) + 1
+            # Use tier_history to count per-tier outcomes
+            history = info.get("tier_history", [])
+            if history:
+                for entry in history:
+                    tier = entry.get("tier", "unknown")
+                    st = entry.get("status", "unknown")
+                    if tier not in tier_counts:
+                        tier_counts[tier] = {}
+                    tier_counts[tier][st] = tier_counts[tier].get(st, 0) + 1
+            else:
+                tier = info.get("tier", "unknown")
+                st = info.get("status", "unknown")
+                if tier not in tier_counts:
+                    tier_counts[tier] = {}
+                tier_counts[tier][st] = tier_counts[tier].get(st, 0) + 1
 
         remaining = 0
         if all_ids is not None:
