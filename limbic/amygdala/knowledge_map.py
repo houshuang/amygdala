@@ -326,8 +326,10 @@ def _propagate_heuristic(
     """
     if familiarity in ("none", "heard_of"):
         _propagate_down(graph, state, node_id, ceiling=0.1, depth=0, visited=set())
-    if familiarity in ("solid", "deep"):
-        _propagate_up(graph, state, node_id, floor=0.8, depth=0, visited=set())
+    if familiarity in ("basic", "solid", "deep"):
+        # "basic" also implies prereqs known, just with weaker floor
+        floor = 0.65 if familiarity == "basic" else 0.8
+        _propagate_up(graph, state, node_id, floor=floor, depth=0, visited=set())
     # Global sweep: re-propagate prereqs-met from ALL high-belief nodes
     _global_prereqs_sweep(graph, state)
 
