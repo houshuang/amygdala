@@ -27,7 +27,7 @@ pip install "limbic[llm]"
 | **embed** | Sentence embedding with 3 whitening modes, Matryoshka truncation, genericization, persistent cache | 83–452x speedup with SQLite cache; +32% nearest-neighbor separation with Soft-ZCA whitening |
 | **search** | Numpy vector search, SQLite FTS5, hybrid RRF fusion, cross-encoder reranking | +32.5% nDCG with reranking; RRF 4x more robust than convex fusion under embedding degradation |
 | **novelty** | Multi-signal novelty scoring: global + topic-local + centroid specificity + temporal decay + NLI cascade | +17% novel/known separation with centroid specificity; NLI fixes 94% of high-cosine contradictions |
-| **cluster** | Greedy centroid clustering (batch + incremental), complete linkage, pairwise cosine, confidence-calibrated pair classification | Incremental matches batch quality at threshold >= 0.85, 1.8x faster, zero order sensitivity |
+| **cluster** | Greedy centroid clustering (batch + incremental), complete linkage, pairwise cosine, confidence-calibrated pair classification | Incremental matches batch quality at threshold >= 0.85, 1.8x faster; order-sensitive at lower thresholds |
 | **document_similarity** | Document-level thematic similarity using weighted multi-field embeddings | 94% accuracy on human-rated pairs; AUROC=0.930 on 300-pair dataset; Spearman rho=0.818 |
 | **cache** | Persistent SQLite-backed embedding cache | 20K texts: 48s cold → 585ms warm |
 | **index** | SQLite document/chunk storage with hybrid search, `connect()` helper | Single-file, zero-config, FTS5 built in |
@@ -277,8 +277,8 @@ eval_data = format_for_eval_harness(result)
 **Why not HDBSCAN?** Experiment 5 tested both on 20 Newsgroups with human topic labels. Similar V-measure (~0.55). Greedy centroid is simpler, needs no hyperparameter tuning, and works incrementally.
 
 **Incremental clustering properties** (Experiment 18):
-- Zero order sensitivity at threshold ≥ 0.85 (shuffling input order doesn't change results)
-- Matches batch quality exactly (same ARI, same cluster count)
+- Order-sensitive: insertion order can change cluster assignments, especially at lower thresholds. Use batch `greedy_centroid_cluster` when determinism matters.
+- Matches batch quality closely at threshold ≥ 0.85 (similar ARI, similar cluster count)
 - 1.8x faster (single-pass vs. pairwise comparison)
 
 ---

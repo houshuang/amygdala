@@ -141,9 +141,23 @@ async def generate_structured(prompt: str, schema: dict, system_prompt: str = "Y
                     "model": model, "provider": m["provider"]}
 
 
+def _run_sync(coro):
+    """Run an async coroutine synchronously, handling nested event loops."""
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        loop = None
+    if loop is None:
+        return asyncio.run(coro)
+    # Already inside a running loop (Jupyter, ASGI, etc.)
+    import concurrent.futures
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+        return pool.submit(asyncio.run, coro).result()
+
+
 def generate_sync(prompt: str, **kwargs) -> str:
-    return asyncio.run(generate(prompt, **kwargs))
+    return _run_sync(generate(prompt, **kwargs))
 
 
 def generate_structured_sync(prompt: str, schema: dict, **kwargs) -> tuple[dict, dict]:
-    return asyncio.run(generate_structured(prompt, schema, **kwargs))
+    return _run_sync(generate_structured(prompt, schema, **kwargs))

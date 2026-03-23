@@ -107,14 +107,20 @@ def reference_exists(
     *,
     severity: str = "error",
 ) -> Rule:
-    """Referenced entity must exist in the dataset."""
+    """Referenced entity must exist in the dataset. Handles scalar and list fields."""
     def check(etype: str, eid: str, data: dict, all_entities: dict) -> list[str]:
-        ref_id = data.get(field_name)
-        if ref_id is None:
+        ref_val = data.get(field_name)
+        if ref_val is None:
             return []
         target_entities = all_entities.get(target_type, {})
-        if str(ref_id) not in target_entities:
-            return [f"{field_name} references {target_type}/{ref_id} which does not exist"]
+        if isinstance(ref_val, list):
+            missing = [str(r) for r in ref_val if str(r) not in target_entities]
+            if missing:
+                return [f"{field_name} references {target_type}/{m} which does not exist"
+                        for m in missing]
+            return []
+        if str(ref_val) not in target_entities:
+            return [f"{field_name} references {target_type}/{ref_val} which does not exist"]
         return []
     return Rule(name=f"ref_{source_type}_{field_name}", check_fn=check,
                 entity_type=source_type, severity=severity)

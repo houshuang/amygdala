@@ -223,24 +223,24 @@ class BatchProcessor:
             batch_cost = 0.0
             budget_hit = False
             for ir in item_results:
+                # Check budget before committing this item's cost
+                if self.max_cost is not None and (cumulative_cost + batch_cost + ir.cost) > self.max_cost:
+                    log.info("Budget limit $%.2f would be exceeded by item %s (cost $%.2f). Stopping.",
+                             self.max_cost, ir.id, ir.cost)
+                    budget_hit = True
+                    break
                 self.store.update_item(ir.id, ir.status, cost=ir.cost, **ir.metadata)
                 batch_cost += ir.cost
                 if ir.status == "error":
                     result.errors += 1
                 else:
                     result.processed += 1
-                # Per-item budget check to avoid overshoot
-                if self.max_cost is not None and (cumulative_cost + batch_cost) >= self.max_cost:
-                    budget_hit = True
-                    break
 
             cumulative_cost += batch_cost
             result.total_cost += batch_cost
             processed_so_far += len(batch)
 
             if budget_hit:
-                log.info("Budget limit $%.2f reached mid-batch (spent $%.2f). Stopping.",
-                         self.max_cost, cumulative_cost)
                 break
 
             # Update aggregate state
