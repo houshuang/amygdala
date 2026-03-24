@@ -68,12 +68,15 @@ class StateStore:
     """Persistent SQLite-backed state with WAL mode for concurrent access.
 
     Replaces the previous JSON+flock implementation. Same public API.
+    If a .json sibling exists when opening a .db, it is auto-migrated once.
     """
 
     def __init__(self, state_file: Path):
         self._path = Path(state_file)
+        json_path = None
         # Accept .json paths for backward compatibility — use .db instead
         if self._path.suffix == ".json":
+            json_path = self._path
             self._path = self._path.with_suffix(".db")
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(self._path), timeout=30)
@@ -92,6 +95,53 @@ class StateStore:
             "INSERT OR IGNORE INTO run_state (key, value) VALUES ('started_at', ?)",
             (datetime.now().isoformat(),))
         self._conn.commit()
+        # Auto-migrate from JSON if a sibling .json file exists and DB is empty
+        if json_path is None:
+            json_path = self._path.with_suffix(".json")
+        if json_path.exists():
+            self._migrate_from_json(json_path)
+
+    def _migrate_from_json(self, json_path: Path) -> None:
+        """One-time migration: import legacy JSON state into SQLite.
+
+        Handles both 'items' and 'productions' as the items key (kulturperler
+        used 'productions' in early versions). After migration the JSON file
+        is renamed to .json.migrated so this only runs once.
+        """
+        existing_count = self._conn.execute("SELECT COUNT(*) FROM items").fetchone()[0]
+        if existing_count > 0:
+            # DB already has data — don't overwrite. Just rename the JSON.
+            json_path.rename(json_path.with_suffix(".json.migrated"))
+            log.info("StateStore: DB already populated, renamed %s", json_path.name)
+            return
+
+        raw = json.loads(json_path.read_text())
+        items = raw.get("items") or raw.get("productions") or {}
+
+        if not items:
+            json_path.rename(json_path.with_suffix(".json.migrated"))
+            return
+
+        # Migrate run_state
+        for key in ("total_cost", "batches_run", "started_at"):
+            if key in raw:
+                self._conn.execute(
+                    "INSERT OR REPLACE INTO run_state (key, value) VALUES (?, ?)",
+                    (key, str(raw[key])))
+
+        # Migrate items
+        for item_id, info in items.items():
+            status = info.get("status", "unknown")
+            cost = info.get("cost", 0.0)
+            ts = info.get("ts", "")
+            meta = {k: v for k, v in info.items() if k not in ("status", "cost", "ts")}
+            self._conn.execute(
+                "INSERT OR IGNORE INTO items (item_id, status, cost, ts, metadata) VALUES (?,?,?,?,?)",
+                (str(item_id), status, float(cost), ts, json.dumps(meta)))
+
+        self._conn.commit()
+        json_path.rename(json_path.with_suffix(".json.migrated"))
+        log.info("StateStore: migrated %d items from %s", len(items), json_path.name)
 
     @property
     def path(self) -> Path:

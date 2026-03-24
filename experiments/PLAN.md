@@ -227,9 +227,27 @@ Key: Raw beats whitened on diverse data. 128d whitening > 256d whitening (less n
 
 FTS5 dominates on nDCG when queries are properly sanitized (scientific claims share exact terms with abstracts). Hybrid gets best recall (+3pp over FTS5). First run had 299/300 empty FTS5 results due to unsanitized queries — **fixed: added `_sanitize_query()` to `FTS5Index`**.
 
+### Knowledge Map Experiment (2026-03-23)
+
+**Status**: Complete. See `results/exp_knowledge_map_matrix.json`.
+
+Full matrix experiment: 2 propagators × 5 strategies × 5 topologies × 4 overclaim rates × batch sizes.
+
+**Key findings**:
+1. **Bayesian propagator is best default**: avg 7.2 Q→80% vs 8.8 heuristic (18% fewer questions overall, 42% on chains)
+2. **EIG and entropy strategies tie** at aggregate level — propagation does most information work
+3. **Post-hoc foil calibration doesn't help** — signal from 3 foils too weak to flip decisions
+4. **Noisy observation mode marginal** — only +1.3% at extreme 40% overclaim, negative at realistic rates
+5. **Bayesian constraint propagation IS the overclaiming defense** — backward pass catches inconsistent self-reports
+6. **Batch selection efficient** — batch(5) reaches 80% in 1 round (5 total Qs, same as sequential)
+7. **Fringes converge rapidly** — 98% precision at 12 questions
+
+**Actions taken**: Default propagator → bayesian. Added `next_probe_batch(n)`.
+
 ### Remaining Experiments
 
 - Exp 5: Clustering on 20 Newsgroups (human topic labels)
 - Exp 6: NLI cross-encoder cascade
 - Exp 1b: Nomic + whitening combination
 - Norwegian eval: NbAiLab/norwegian-paws-x
+- Knowledge map on real educational graphs: AL-CPL (586 concepts), Metacademy (141 concepts)

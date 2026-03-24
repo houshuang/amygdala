@@ -8,7 +8,7 @@ from .cache import PersistentEmbeddingCache
 from .index import connect
 from .document_similarity import Document, SimilarityPair, find_similar_documents, embed_documents, document_similarity_matrix
 from .calibrate import cohens_kappa, validate_llm_judge, intra_rater_reliability
-from .knowledge_map import KnowledgeGraph, BeliefState, init_beliefs, next_probe, update_beliefs, coverage_report, is_converged, calibrate_beliefs, adjust_for_calibration, knowledge_fringes
+from .knowledge_map import KnowledgeGraph, BeliefState, init_beliefs, next_probe, next_probe_batch, update_beliefs, coverage_report, is_converged, calibrate_beliefs, adjust_for_calibration, knowledge_fringes
 
 __all__ = [
     "EmbeddingModel",
@@ -41,6 +41,7 @@ __all__ = [
     "BeliefState",
     "init_beliefs",
     "next_probe",
+    "next_probe_batch",
     "update_beliefs",
     "coverage_report",
     "is_converged",

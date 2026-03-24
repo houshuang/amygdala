@@ -32,7 +32,7 @@ pip install "limbic[llm]"
 | **cache** | Persistent SQLite-backed embedding cache | 20K texts: 48s cold → 585ms warm |
 | **index** | SQLite document/chunk storage with hybrid search, `connect()` helper | Single-file, zero-config, FTS5 built in |
 | **calibrate** | Cohen's kappa, LLM judge validation (Bootstrap Validation Protocol), intra-rater reliability | Validates LLM judges against human gold labels |
-| **knowledge_map** | Adaptive knowledge probing via entropy maximization, with heuristic or exact Bayesian propagation | Converges in 8–12 questions on 30-node graphs |
+| **knowledge_map** | Adaptive knowledge probing via EIG selection with Bayesian belief propagation, batch probing, KST fringes | Converges in 5–8 questions on 20-node graphs; Bayesian propagator 42% faster than heuristic on chains |
 | **knowledge_map_gen** | LLM-powered knowledge graph generation from topic descriptions | Generates 15–50 node prerequisite DAGs |
 | **llm** | Multi-provider LLM client (Gemini, Anthropic, OpenAI) with structured output and retry | Auto-fallback, cost tracking, async + sync |
 
@@ -330,11 +330,11 @@ Tested and rejected approaches:
 
 ## Knowledge mapping (`knowledge_map.py`)
 
-Adaptive knowledge probing: efficiently map what someone knows about a topic using information theory. Entropy-maximizing probe selection with two propagation backends.
+Adaptive knowledge probing: efficiently map what someone knows about a topic using information theory. Expected Information Gain probe selection with Bayesian belief propagation through prerequisite DAGs.
 
 ```python
 from limbic.amygdala.knowledge_map import (
-    KnowledgeGraph, init_beliefs, next_probe,
+    KnowledgeGraph, init_beliefs, next_probe, next_probe_batch,
     update_beliefs, coverage_report, knowledge_fringes
 )
 
@@ -345,15 +345,16 @@ graph = KnowledgeGraph(nodes=[
     {"id": "mirror", "title": "Mirror protocol", "level": 3, "prerequisites": ["crdt", "lamport"]},
 ])
 
-# Heuristic propagation (default, zero dependencies)
+# Initialize — Bayesian propagation by default (best accuracy)
 state = init_beliefs(graph)
-
-# Exact belief propagation (+1-5% accuracy, zero dependencies)
-state = init_beliefs(graph, propagator="bayesian")
 
 # Get next question — maximizes expected information gain
 probe = next_probe(graph, state)
 # -> {"node_id": "crdt", "question_type": "recognition", "information_gain": 1.2}
+
+# Or get a batch of diverse, high-value questions at once
+probes = next_probe_batch(graph, state, n=3)
+# Avoids redundant probes (e.g., won't pick 3 siblings of the same parent)
 
 # Update after user response — propagates through prerequisite DAG
 update_beliefs(graph, state, "crdt", "solid")
@@ -365,23 +366,29 @@ fringes = knowledge_fringes(graph, state)  # outer_fringe = ready to learn next
 
 ### Propagation backends
 
-| Backend | Accuracy (K=5) | Latency | Dependencies |
-|---------|---------------|---------|-------------|
-| `"heuristic"` | 65-69% | 0.08ms | none |
-| `"bayesian"` | 69-74% | 0.16ms | none |
+| Backend | Accuracy (K=5) | Q→80% on chains | Latency | Dependencies |
+|---------|---------------|-----------------|---------|-------------|
+| `"bayesian"` (default) | 69-74% | 7 questions | 0.16ms | none |
+| `"heuristic"` | 65-69% | 12 questions | 0.08ms | none |
 
-Both backends are zero-dependency (numpy only). The heuristic uses bidirectional
-rule-based propagation with global sweeps. The Bayesian backend implements
-Pearl's forward-backward belief propagation with noisy-AND CPDs — exact on
-trees/chains, approximate on dense DAGs with v-structures.
+Both backends are zero-dependency. The Bayesian backend implements Pearl's
+forward-backward belief propagation with noisy-AND CPDs — exact on trees/chains,
+approximate on dense DAGs. Validated across 5 graph topologies × 50 trials
+(see `experiments/exp_knowledge_map_matrix.py`).
+
+The Bayesian propagator also provides implicit overclaiming defense through
+constraint propagation: if someone claims to know a node but its children are
+unknown, the backward pass adjusts the belief downward.
 
 ### Features
 
 - **Expected Information Gain** probe selection (simulates all possible answers)
-- **Bidirectional belief propagation** through prerequisite DAG (heuristic or exact Bayesian)
+- **Batch probe selection** via `next_probe_batch(n)` — diversity-aware sequential greedy
+- **Bayesian belief propagation** through prerequisite DAG (Pearl's forward-backward)
 - **Overclaiming detection** via foil concepts (signal detection theory)
 - **KST inner/outer fringe** computation for learning path recommendations
-- **Convergence** in 8–12 questions on 30-node graphs (verified via Monte Carlo simulation)
+- **Noisy observation mode** for BKT-style updates (treats self-report as noisy signal)
+- **Convergence** in 5–8 questions on 20-node graphs (verified via Monte Carlo simulation)
 
 ### LLM-powered graph generation
 

@@ -42,7 +42,7 @@ def connect(db_path: str | Path, readonly: bool = False) -> sqlite3.Connection:
     else:
         conn = sqlite3.connect(path_str, timeout=30)
     conn.row_factory = sqlite3.Row
-    if path_str != ":memory:":
+    if path_str != ":memory:" and not readonly:
         conn.execute("PRAGMA journal_mode=WAL")
         conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute("PRAGMA cache_size=-64000")

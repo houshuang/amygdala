@@ -4,6 +4,19 @@ All notable changes to the limbic monorepo (formerly amygdala) are documented he
 
 ---
 
+## 2026-03-23 -- Knowledge map experiments and default propagator switch
+
+### Changed
+- **Default propagator switched to "bayesian"** in `init_beliefs()`. Comprehensive experiment across 5 topologies × 50 trials shows Bayesian propagator reaches 80% accuracy in 7.2 questions vs 8.8 for heuristic (18% fewer questions overall, 42% fewer on chains).
+- `adjust_for_calibration()` now discounts all beliefs above 0.5 (not just unassessed), accepts optional `graph` parameter for re-propagation.
+
+### Added
+- `next_probe_batch(n)`: diversity-aware batch probe selection. Uses sequential greedy with simulated outcomes to avoid redundant probes (e.g., won't pick 3 siblings of the same parent). Batch(5) reaches 80% accuracy in 1 round.
+- Comprehensive experiment: `experiments/exp_knowledge_map_matrix.py` — tests propagator × strategy × topology × noise × calibration × batch selection.
+
+### Fixed
+- Dampening test updated for Bayesian propagator behavior (CPD model gives slightly different grandchild beliefs than heuristic's multiplicative dampening).
+
 ## 2026-03-23 -- Bayesian CPD parameter optimization
 
 ### Changed

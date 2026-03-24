@@ -5,10 +5,11 @@ someone knows using entropy-maximizing probe selection and belief propagation
 through the prerequisite DAG.
 
 Two propagation backends (both zero-dependency):
-  - "heuristic" (default): rule-based bidirectional propagation with global
-    sweeps. Fast (~0.08ms), good accuracy on all topologies.
-  - "bayesian": Pearl's forward-backward belief propagation with noisy-AND
-    CPDs. Exact on trees/chains, approximate on dense DAGs. ~0.16ms.
+  - "bayesian" (default): Pearl's forward-backward belief propagation with
+    noisy-AND CPDs. Best accuracy, especially on chains (42% faster convergence)
+    and diamonds. Exact on trees, approximate on dense DAGs. ~0.16ms.
+  - "heuristic": rule-based bidirectional propagation with global sweeps.
+    Slightly faster (~0.08ms) but less accurate on structured graphs.
 
 Usage:
     from limbic.amygdala.knowledge_map import KnowledgeGraph, init_beliefs, next_probe, update_beliefs
@@ -17,8 +18,8 @@ Usage:
         {"id": "crdt", "title": "CRDTs", "level": 1},
         {"id": "mirror", "title": "Mirror", "level": 2, "prerequisites": ["crdt"]},
     ])
-    state = init_beliefs(graph)                          # heuristic (default)
-    state = init_beliefs(graph, propagator="bayesian")   # exact Bayesian inference
+    state = init_beliefs(graph)                            # bayesian (default)
+    state = init_beliefs(graph, propagator="heuristic")   # faster but less accurate
     probe = next_probe(graph, state)       # → {node_id: "crdt", ...}
     update_beliefs(graph, state, "crdt", "solid")  # user knows CRDTs well
     probe = next_probe(graph, state)       # → {node_id: "mirror", ...} (prerequisites met)
@@ -142,15 +143,15 @@ def _total_entropy(state: BeliefState) -> float:
 
 
 def init_beliefs(
-    graph: KnowledgeGraph, prior_fn=None, propagator: str = "heuristic",
+    graph: KnowledgeGraph, prior_fn=None, propagator: str = "bayesian",
 ) -> BeliefState:
     """Initialize beliefs for all nodes.
 
     Args:
         graph: The knowledge graph.
         prior_fn: Custom prior function(node_dict) -> float. Default uses obscurity.
-        propagator: "heuristic" (rule-based, zero deps) or "bayesian" (forward-backward
-            belief propagation, +1-5% accuracy, also zero deps).
+        propagator: "bayesian" (forward-backward belief propagation, best accuracy)
+            or "heuristic" (rule-based, slightly faster but less accurate on chains/diamonds).
     """
     beliefs = {}
     for node in graph.nodes:
@@ -213,6 +214,36 @@ def next_probe(
         "question_number": q_count + 1,
         "remaining": sum(1 for n in candidates if 0.2 < state.beliefs.get(n["id"], 0.3) < 0.8),
     }
+
+
+def next_probe_batch(
+    graph: KnowledgeGraph, state: BeliefState, n: int = 3, strategy: str = "eig",
+) -> list[dict]:
+    """Select n diverse, high-value nodes to probe simultaneously.
+
+    Uses sequential greedy selection: pick the best node by EIG, simulate its
+    most likely outcome, then pick the next best from the updated state. This
+    avoids selecting redundant nodes (e.g., three children of the same parent).
+
+    Returns list of probe dicts (same format as next_probe), up to n items.
+    """
+    sim_state = BeliefState(
+        beliefs=dict(state.beliefs), assessed=set(state.assessed),
+        _propagator=state._propagator,
+    )
+    probes = []
+    for _ in range(n):
+        probe = next_probe(graph, sim_state, strategy=strategy)
+        if probe is None:
+            break
+        probes.append(probe)
+        # Simulate the most likely outcome: if belief > 0.5, assume "solid";
+        # otherwise assume "none". This shifts the simulated state so the next
+        # pick accounts for information already gained.
+        nid = probe["node_id"]
+        likely_fam = "solid" if sim_state.beliefs.get(nid, 0.3) > 0.5 else "none"
+        update_beliefs(graph, sim_state, nid, likely_fam)
+    return probes
 
 
 def _select_eig(
@@ -613,16 +644,27 @@ def calibrate_beliefs(state: BeliefState, foil_responses: list[dict]) -> float:
     return 1.0 - false_alarm_rate
 
 
-def adjust_for_calibration(state: BeliefState, calibration_factor: float) -> None:
-    """Apply calibration factor to unassessed beliefs. Mutates state.
+def adjust_for_calibration(
+    state: BeliefState, calibration_factor: float,
+    graph: KnowledgeGraph | None = None,
+) -> None:
+    """Apply calibration factor to beliefs inflated by overclaiming. Mutates state.
 
-    Directly-assessed nodes keep their values; only propagated/prior beliefs
-    are discounted. A calibration_factor of 0.7 means the user overclaims ~30%.
+    Discounts the above-0.5 portion of all high beliefs — both assessed positive
+    reports (likely overclaimed) and propagated beliefs. Then optionally
+    re-propagates if a graph is provided.
+
+    A calibration_factor of 0.7 means ~30% overclaiming, so a belief of 0.9
+    becomes 0.5 + 0.4 * 0.7 = 0.78. Beliefs at or below 0.5 are untouched.
     """
     calibration_factor = max(0.0, min(1.0, calibration_factor))
     for node_id in state.beliefs:
-        if node_id not in state.assessed:
-            state.beliefs[node_id] *= calibration_factor
+        p = state.beliefs[node_id]
+        if p > 0.5:
+            state.beliefs[node_id] = 0.5 + (p - 0.5) * calibration_factor
+    # Re-propagate from all assessed nodes to update the graph consistently
+    if graph is not None:
+        _propagate(graph, state, "", "")
 
 
 # ── KST Inner/Outer Fringe ──────────────────────────────────

@@ -91,7 +91,7 @@ pip install -e ".[dev,llm,hippocampus]"
 | **calibrate** | Cohen's kappa, LLM judge validation (Bootstrap Validation Protocol), intra-rater reliability | Validates LLM judges against human gold labels |
 | **cache** | Persistent SQLite-backed embedding cache | 20K texts: 48s cold → 585ms warm |
 | **index** | SQLite document/chunk storage with hybrid search | Single-file, zero-config, FTS5 built in |
-| **knowledge_map** | Adaptive knowledge probing via entropy maximization with heuristic or exact belief propagation (zero deps) | Converges in 8–12 questions on 30-node graphs |
+| **knowledge_map** | Adaptive knowledge probing via EIG selection with Bayesian belief propagation, batch probing, KST fringes | Converges in 5–8 questions on 20-node graphs; Bayesian propagator 42% faster than heuristic on chains |
 | **llm** | Multi-provider LLM client (Gemini, Anthropic, OpenAI) with structured output and retry | Auto-fallback, cost tracking, async + sync |
 
 ### Quick start
@@ -336,7 +336,10 @@ Calibrated thresholds from 300 LLM-rated + 18 human-rated article pairs:
 Adaptive knowledge probing: efficiently map what someone knows about a topic using information theory.
 
 ```python
-from limbic.amygdala.knowledge_map import KnowledgeGraph, init_beliefs, next_probe, update_beliefs, coverage_report, knowledge_fringes
+from limbic.amygdala.knowledge_map import (
+    KnowledgeGraph, init_beliefs, next_probe, next_probe_batch,
+    update_beliefs, coverage_report, knowledge_fringes,
+)
 
 # Define a knowledge graph (or generate one with LLM -- see below)
 graph = KnowledgeGraph(nodes=[
@@ -345,29 +348,33 @@ graph = KnowledgeGraph(nodes=[
     {"id": "mirror", "title": "Mirror protocol", "level": 3, "prerequisites": ["crdt", "lamport"]},
 ])
 
-# Initialize belief state (priors based on concept obscurity)
+# Initialize — Bayesian propagation by default (best accuracy)
 state = init_beliefs(graph)
 
-# Get next question -- maximizes expected information gain (Shannon entropy)
+# Get next question -- maximizes expected information gain
 probe = next_probe(graph, state)
 # -> {"node_id": "crdt", "question_type": "recognition", "information_gain": 1.2, ...}
 
+# Or get a batch of diverse, high-value questions at once
+probes = next_probe_batch(graph, state, n=3)
+
 # User responds with familiarity level
 update_beliefs(graph, state, "crdt", "solid")
-# Automatically propagates: knowing CRDTs well -> prerequisites likely known too
+# Bayesian propagation: knowing CRDTs well -> prerequisites likely known too
 
 # Check coverage
 report = coverage_report(graph, state)
 # -> {"known": [...], "unknown": [...], "uncertain": [...], "coverage_pct": 33.3}
 
-# Find learning frontier
+# Find learning frontier (KST fringes)
 fringes = knowledge_fringes(graph, state)
 # -> {"outer_fringe": ["lamport"], ...}  -- ready to learn next
 ```
 
 Features:
 - **Expected Information Gain** probe selection (simulates all possible answers)
-- **Two propagation backends**: rule-based heuristic (0.08ms) or exact belief propagation (0.16ms), both zero-dependency
+- **Batch probe selection** via `next_probe_batch(n)` — diversity-aware, avoids redundant probes
+- **Bayesian belief propagation** (Pearl's forward-backward, 0.16ms) — 42% faster convergence than heuristic on chains. Also provides implicit overclaiming defense via constraint propagation.
 - **Overclaiming detection** via foil concepts (signal detection theory)
 - **KST inner/outer fringe** computation for learning path recommendations
 - **LLM-powered graph generation** from domain descriptions or document outlines
@@ -694,7 +701,7 @@ combined = build_batch_context(items, context_fn=my_context_builder, format="mar
 
 ## Design decisions (with evidence)
 
-Every significant design choice in limbic.amygdala was tested in controlled experiments. 22 experiments total, each with a specific hypothesis, dataset, and quantitative result:
+Every significant design choice in limbic.amygdala was tested in controlled experiments. 23 experiments total, each with a specific hypothesis, dataset, and quantitative result:
 
 | # | Question | Finding | Dataset |
 |---|----------|---------|---------|
@@ -720,6 +727,7 @@ Every significant design choice in limbic.amygdala was tested in controlled expe
 | 20 | Persistent cache? | 83-452x speedup. Lossless. | 20K embeddings |
 | 21 | All-but-the-top? | Matches Soft-ZCA (+27.4%), simpler math | Domain calibration |
 | 22 | Document-level similarity? | Weighted 0.5×summary + 0.5×claims: **94% acc, rho=0.818**. Beats single-field (89%), concatenation (89%), LLM judge (78%), topic Jaccard (50%). AUROC=0.930 on 300 pairs. | 18 human + 300 LLM + 50 synthetic pairs |
+| 23 | Knowledge map: best propagator × strategy? | **Bayesian + EIG** best overall (avg 7.2 Q→80%). Bayesian 42% faster than heuristic on chains. Post-hoc foil calibration doesn't help; Bayesian constraint propagation is the primary overclaiming defense. Batch probing maintains efficiency (5 Qs in 1 round = same as sequential). | 5 topologies × 50 trials |
 
 Experiment code is in the `experiments/` directory if you want to reproduce or extend them.
 
@@ -787,7 +795,7 @@ The three packages are independent but designed to work together:
 
 ## Tests
 
-290 tests covering all three packages:
+297 tests covering all three packages:
 
 ```bash
 pip install -e ".[dev]"
@@ -796,7 +804,7 @@ python -m pytest tests/ -v
 
 | Package | Tests |
 |---------|-------|
-| limbic.amygdala | 201 |
+| limbic.amygdala | 208 |
 | limbic.hippocampus | 55 |
 | limbic.cerebellum | 34 |
 

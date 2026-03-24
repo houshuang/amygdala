@@ -3,8 +3,14 @@
 ## Active Research
 
 - Document similarity calibration: threshold tuning across more domains (currently calibrated on news articles)
-- Knowledge map convergence: testing on larger graphs (50+ nodes) and domain-specific concept hierarchies
+- Knowledge map: test on real educational graphs (AL-CPL 586 concepts, Metacademy 141 concepts — see research/tutorial_platform_graphs.md)
 - Calibration metrics: validating LLM judges against human gold labels at scale
+
+## Recently Completed
+
+- **Knowledge map comprehensive experiment** (2026-03-23): Full matrix of propagator × strategy × topology × noise. Key findings: Bayesian propagator 42% faster convergence than heuristic on chains; EIG and entropy tie at aggregate; batch probing works efficiently; post-hoc foil calibration doesn't help (Bayesian constraint propagation is the primary overclaiming defense). Default propagator switched to "bayesian". Added `next_probe_batch(n)`.
+- **Knowledge map: Bayesian belief propagation** — replaced pgmpy with from-scratch implementation, optimized CPD parameters via 180-config grid sweep
+- **Knowledge map: EIG probe selection, foil calibration, KST fringes, noisy observation mode** — all implemented and tested
 
 ## Hippocampus Ideas
 

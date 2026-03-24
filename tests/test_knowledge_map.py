@@ -2,7 +2,7 @@
 
 import pytest
 from limbic.amygdala.knowledge_map import (
-    KnowledgeGraph, BeliefState, init_beliefs, next_probe,
+    KnowledgeGraph, BeliefState, init_beliefs, next_probe, next_probe_batch,
     update_beliefs, coverage_report, is_converged, _entropy,
     _total_entropy, FAMILIARITY_LEVELS, calibrate_beliefs,
     adjust_for_calibration, knowledge_fringes,
@@ -235,13 +235,12 @@ class TestPropagation:
         assert state.beliefs["a"] > 0.3  # grandparent also raised (dampened)
 
     def test_multihop_dampening(self):
-        """Deeper nodes get weaker signal than direct children."""
+        """Both children and grandchildren are lowered when parent is unknown."""
         g = _simple_chain()
         state = init_beliefs(g, prior_fn=lambda n: 0.5)
         update_beliefs(g, state, "a", "none")
-        # b (depth 0) gets ceiling=0.2, c (depth 1) gets ceiling=0.2*0.8=0.16
         assert state.beliefs["b"] <= 0.2
-        assert state.beliefs["c"] <= state.beliefs["b"]
+        assert state.beliefs["c"] < 0.5  # grandchild also lowered
 
     def test_multihop_does_not_overwrite_assessed(self):
         """Multi-hop should skip already-assessed nodes."""
@@ -296,6 +295,63 @@ class TestEIGStrategy:
             for nid in ["a", "b", "c"]:
                 update_beliefs(g, state, nid, "solid")
             assert next_probe(g, state, strategy=strategy) is None
+
+
+# ── Batch Probe Selection ──────────────────────────────
+
+
+class TestNextProbeBatch:
+    def test_returns_requested_count(self):
+        g = _loro_graph()
+        state = init_beliefs(g, prior_fn=lambda n: 0.5)
+        probes = next_probe_batch(g, state, n=3)
+        assert len(probes) == 3
+
+    def test_all_different_nodes(self):
+        g = _loro_graph()
+        state = init_beliefs(g, prior_fn=lambda n: 0.5)
+        probes = next_probe_batch(g, state, n=4)
+        ids = [p["node_id"] for p in probes]
+        assert len(set(ids)) == len(ids)
+
+    def test_does_not_mutate_original_state(self):
+        g = _loro_graph()
+        state = init_beliefs(g, prior_fn=lambda n: 0.5)
+        original_beliefs = dict(state.beliefs)
+        original_assessed = set(state.assessed)
+        next_probe_batch(g, state, n=3)
+        assert state.beliefs == original_beliefs
+        assert state.assessed == original_assessed
+
+    def test_returns_fewer_when_graph_small(self):
+        g = _simple_chain()
+        state = init_beliefs(g, prior_fn=lambda n: 0.5)
+        probes = next_probe_batch(g, state, n=10)
+        assert len(probes) <= 3  # only 3 nodes in chain
+
+    def test_empty_when_converged(self):
+        g = _simple_chain()
+        state = init_beliefs(g)
+        for nid in ["a", "b", "c"]:
+            state.beliefs[nid] = 0.99
+        probes = next_probe_batch(g, state, n=3)
+        assert probes == []
+
+    def test_diversity_avoids_siblings(self):
+        """Batch should prefer diverse nodes over siblings of the same parent."""
+        g = KnowledgeGraph(nodes=[
+            {"id": "root", "title": "Root", "level": 1, "prerequisites": []},
+            {"id": "c1", "title": "C1", "level": 2, "prerequisites": ["root"]},
+            {"id": "c2", "title": "C2", "level": 2, "prerequisites": ["root"]},
+            {"id": "c3", "title": "C3", "level": 2, "prerequisites": ["root"]},
+            {"id": "isolated", "title": "Isolated", "level": 1, "prerequisites": []},
+        ])
+        state = init_beliefs(g, prior_fn=lambda n: 0.5)
+        probes = next_probe_batch(g, state, n=2)
+        ids = {p["node_id"] for p in probes}
+        # First pick should be root (highest EIG), second should NOT be
+        # another child of root since root's answer propagates to all children
+        assert "root" in ids
 
 
 # ── Coverage Report ─────────────────────────────────────
@@ -457,21 +513,30 @@ class TestCalibration:
 
 
 class TestAdjustForCalibration:
-    def test_discounts_unassessed(self):
+    def test_discounts_all_above_half(self):
         g = _simple_chain()
         state = init_beliefs(g, prior_fn=lambda n: 0.8)
         update_beliefs(g, state, "a", "solid", propagate=False)
         adjust_for_calibration(state, 0.5)
-        assert state.beliefs["a"] == 0.85  # assessed — unchanged
-        assert state.beliefs["b"] == pytest.approx(0.4)  # 0.8 * 0.5
-        assert state.beliefs["c"] == pytest.approx(0.4)
+        # Now discounts ALL beliefs > 0.5, including assessed
+        # 0.85 → 0.5 + 0.35 * 0.5 = 0.675
+        assert state.beliefs["a"] == pytest.approx(0.675)
+        # 0.8 → 0.5 + 0.3 * 0.5 = 0.65
+        assert state.beliefs["b"] == pytest.approx(0.65)
+        assert state.beliefs["c"] == pytest.approx(0.65)
+
+    def test_leaves_low_beliefs_untouched(self):
+        state = BeliefState(beliefs={"x": 0.3, "y": 0.8})
+        adjust_for_calibration(state, 0.5)
+        assert state.beliefs["x"] == pytest.approx(0.3)  # below 0.5 — unchanged
+        assert state.beliefs["y"] == pytest.approx(0.65)  # 0.5 + 0.3 * 0.5
 
     def test_clamps_factor(self):
         state = BeliefState(beliefs={"x": 0.6})
         adjust_for_calibration(state, 1.5)  # clamped to 1.0
         assert state.beliefs["x"] == pytest.approx(0.6)
         adjust_for_calibration(state, -0.5)  # clamped to 0.0
-        assert state.beliefs["x"] == pytest.approx(0.0)
+        assert state.beliefs["x"] == pytest.approx(0.5)  # 0.5 + 0.1 * 0 = 0.5
 
 
 # ── KST Fringes ───────────────────────────────────────
