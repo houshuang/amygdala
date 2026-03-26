@@ -4,7 +4,8 @@ import numpy as np
 import pytest
 
 from limbic.amygdala.embed import EmbeddingModel
-from limbic.amygdala.search import VectorIndex, FTS5Index, HybridSearch, Result
+from limbic.amygdala.index import Index
+from limbic.amygdala.search import VectorIndex, FTS5Index, HybridSearch, Result, dedup_by
 
 
 TEST_DOCS = [
@@ -184,3 +185,117 @@ class TestHybridSearch:
         results = hybrid.search(query_vec, "environmental science", limit=5, filter_ids=env_ids)
 
         assert all(r.id in env_ids for r in results)
+
+
+class TestFTS5Sanitization:
+    def test_reserved_word_not(self):
+        """FTS5 reserved word NOT should be quoted, not interpreted as operator."""
+        fts = FTS5Index()
+        fts.add(id="1", content="do NOT use this pattern in production")
+        fts.add(id="2", content="a safe pattern for production use")
+        results = fts.search("do NOT use this", limit=5)
+        assert any(r.id == "1" for r in results)
+
+    def test_reserved_word_and_or(self):
+        fts = FTS5Index()
+        fts.add(id="1", content="cats AND dogs OR birds")
+        results = fts.search("cats AND dogs", limit=5)
+        assert any(r.id == "1" for r in results)
+
+    def test_reserved_word_near(self):
+        fts = FTS5Index()
+        fts.add(id="1", content="the NEAR miss was scary")
+        results = fts.search("NEAR miss", limit=5)
+        assert any(r.id == "1" for r in results)
+
+    def test_unicode_norwegian(self):
+        fts = FTS5Index()
+        fts.add(id="1", content="norsk utdanningspolitikk og læreplanreform")
+        results = fts.search("læreplanreform", limit=5)
+        assert len(results) > 0
+        assert results[0].id == "1"
+
+    def test_unicode_mixed(self):
+        fts = FTS5Index()
+        fts.add(id="1", content="Ångström measurements in über precise experiments")
+        results = fts.search("Ångström über", limit=5)
+        assert any(r.id == "1" for r in results)
+
+
+class TestIndexTriggers:
+    def test_insert_syncs_fts(self):
+        idx = Index()
+        idx.add_document("doc1", [{"content": "hello world"}], mtime=1.0)
+        results = idx._fts_search("hello", limit=5)
+        assert len(results) == 1
+
+    def test_delete_cleans_fts(self):
+        idx = Index()
+        idx.add_document("doc1", [{"content": "unique_token_xyz"}], mtime=1.0)
+        assert len(idx._fts_search("unique_token_xyz")) == 1
+        # Re-adding with different content replaces (DELETE old + INSERT new)
+        idx.add_document("doc1", [{"content": "completely different"}], mtime=2.0)
+        assert len(idx._fts_search("unique_token_xyz")) == 0
+        assert len(idx._fts_search("completely different")) == 1
+
+    def test_claims_sync_fts(self):
+        idx = Index()
+        idx.add_claims([{"id": "c1", "content": "claim about education"}])
+        results = idx._fts_search("education")
+        assert len(results) == 1
+
+
+class TestGrep:
+    def test_exact_substring(self):
+        idx = Index()
+        idx.add_document("doc1", [{"content": "file at /Users/stian/src/limbic/index.py"}], mtime=1.0)
+        idx.add_document("doc2", [{"content": "some other content entirely"}], mtime=1.0)
+        results = idx.grep("/Users/stian/src/limbic")
+        assert len(results) == 1
+        assert results[0].source == "grep"
+
+    def test_code_pattern(self):
+        idx = Index()
+        idx.add_document("doc1", [{"content": "def _sync_fts_for(self, doc_path):"}], mtime=1.0)
+        idx.add_document("doc2", [{"content": "def search(self, query):"}], mtime=1.0)
+        results = idx.grep("_sync_fts_for")
+        assert len(results) == 1
+
+    def test_empty_pattern(self):
+        idx = Index()
+        idx.add_document("doc1", [{"content": "anything"}], mtime=1.0)
+        assert idx.grep("") == []
+        assert idx.grep("   ") == []
+
+    def test_collection_filter(self):
+        idx = Index()
+        idx.add_document("doc1", [{"content": "error: connection refused"}], collection="logs", mtime=1.0)
+        idx.add_document("doc2", [{"content": "error: connection timeout"}], collection="other", mtime=1.0)
+        results = idx.grep("error: connection", collection="logs")
+        assert len(results) == 1
+
+
+class TestDedupBy:
+    def test_keeps_first_per_group(self):
+        results = [
+            Result(id="1", score=0.9, metadata={"session": "A"}),
+            Result(id="2", score=0.8, metadata={"session": "B"}),
+            Result(id="3", score=0.7, metadata={"session": "A"}),
+            Result(id="4", score=0.6, metadata={"session": "C"}),
+        ]
+        deduped = dedup_by(results, key_fn=lambda r: r.metadata["session"])
+        assert len(deduped) == 3
+        ids = [r.id for r in deduped]
+        assert "1" in ids  # kept (first from A)
+        assert "3" not in ids  # dropped (second from A)
+
+    def test_empty_input(self):
+        assert dedup_by([], key_fn=lambda r: r.id) == []
+
+    def test_all_unique(self):
+        results = [
+            Result(id="1", score=0.9, metadata={"g": "A"}),
+            Result(id="2", score=0.8, metadata={"g": "B"}),
+        ]
+        deduped = dedup_by(results, key_fn=lambda r: r.metadata["g"])
+        assert len(deduped) == 2

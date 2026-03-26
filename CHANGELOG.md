@@ -4,6 +4,21 @@ All notable changes to the limbic monorepo (formerly amygdala) are documented he
 
 ---
 
+## 2026-03-26 -- Search improvements from claude-chat-search integration
+
+### Fixed
+- **FTS5 query sanitization bug** — unquoted tokens let reserved words (AND, OR, NOT, NEAR) act as FTS5 operators, producing wrong results. Tokens are now quoted in both `FTS5Index._sanitize_query()` and `Index._sanitize_query()`.
+
+### Added
+- **FTS5 auto-sync triggers** on the `Index` class — replaces 30-line manual `_sync_fts_for()` with 3 SQLite triggers that keep `chunks_fts` in sync on INSERT/DELETE/UPDATE. Triggers fire within the same transaction, so FTS stays consistent even on crash.
+- **`Index.grep(pattern)`** — exact substring search via SQL LIKE. For file paths, error messages, and code patterns that FTS5 tokenization mangles.
+- **`dedup_by(results, key_fn)`** — utility to keep only the top-scoring result per group. Useful for session deduplication and similar patterns.
+- **`Index.rebuild_fts()`** — public method for one-time FTS rebuild on databases created before triggers existed.
+- 15 new tests: FTS5 sanitization with reserved words and unicode, trigger lifecycle, grep, dedup_by.
+
+### Changed
+- `Index._sync_fts_for()` replaced by `rebuild_fts()` — no longer called automatically (triggers handle it).
+
 ## 2026-03-23 -- Knowledge map experiments and default propagator switch
 
 ### Changed

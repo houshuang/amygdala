@@ -1,7 +1,7 @@
 """Amygdala - embedding, search, novelty, clustering, and knowledge mapping primitives."""
 
 from .embed import EmbeddingModel
-from .search import VectorIndex, FTS5Index, HybridSearch, Result, rerank
+from .search import VectorIndex, FTS5Index, HybridSearch, Result, rerank, dedup_by
 from .novelty import novelty_score, batch_novelty, corpus_centroid, nli_classify, nli_classify_batch, classify_pairs
 from .cluster import greedy_centroid_cluster, complete_linkage_cluster, IncrementalCentroidCluster, pairwise_cosine, extract_pairs, classify_pairs_with_confidence, format_for_eval_harness
 from .cache import PersistentEmbeddingCache
@@ -17,6 +17,7 @@ __all__ = [
     "HybridSearch",
     "Result",
     "rerank",
+    "dedup_by",
     "novelty_score",
     "batch_novelty",
     "corpus_centroid",

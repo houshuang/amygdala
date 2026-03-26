@@ -30,7 +30,7 @@ pip install "limbic[llm]"
 | **cluster** | Greedy centroid clustering (batch + incremental), complete linkage, pairwise cosine, confidence-calibrated pair classification | Incremental matches batch quality at threshold >= 0.85, 1.8x faster; order-sensitive at lower thresholds |
 | **document_similarity** | Document-level thematic similarity using weighted multi-field embeddings | 94% accuracy on human-rated pairs; AUROC=0.930 on 300-pair dataset; Spearman rho=0.818 |
 | **cache** | Persistent SQLite-backed embedding cache | 20K texts: 48s cold → 585ms warm |
-| **index** | SQLite document/chunk storage with hybrid search, `connect()` helper | Single-file, zero-config, FTS5 built in |
+| **index** | SQLite document/chunk storage with hybrid search, grep, `connect()` helper | Single-file, zero-config, FTS5 auto-synced via triggers |
 | **calibrate** | Cohen's kappa, LLM judge validation (Bootstrap Validation Protocol), intra-rater reliability | Validates LLM judges against human gold labels |
 | **knowledge_map** | Adaptive knowledge probing via EIG selection with Bayesian belief propagation, batch probing, KST fringes | Converges in 5–8 questions on 20-node graphs; Bayesian propagator 42% faster than heuristic on chains |
 | **knowledge_map_gen** | LLM-powered knowledge graph generation from topic descriptions | Generates 15–50 node prerequisite DAGs |
@@ -144,6 +144,10 @@ results = hybrid.search(query_vec, "query text", limit=10)
 
 # Cross-encoder reranking — +32.5% nDCG on top of any search
 reranked = rerank("query text", results)  # uses ms-marco-MiniLM-L-6-v2
+
+# Group-by deduplication — keep best result per group
+from limbic.amygdala import dedup_by
+deduped = dedup_by(results, key_fn=lambda r: r.metadata["session_id"])
 ```
 
 ### Design decisions
@@ -152,7 +156,7 @@ reranked = rerank("query text", results)  # uses ms-marco-MiniLM-L-6-v2
 
 **Why brute-force over ANN?** At <100K vectors, numpy matrix multiply is faster than index-building overhead. No need for FAISS, Annoy, or HNSWlib until you're well past 100K.
 
-**FTS5 query sanitization:** The first run on SciFact returned 299/300 empty results from FTS5 because special characters in scientific queries broke the parser. `FTS5Index` now auto-sanitizes queries. This fix alone moved FTS5 nDCG from 0.003 to 0.638.
+**FTS5 query sanitization:** The first run on SciFact returned 299/300 empty results from FTS5 because special characters in scientific queries broke the parser. `FTS5Index` now auto-sanitizes queries (extracting unicode word tokens and quoting each to prevent reserved words like AND/OR/NOT/NEAR from being interpreted as operators). This fix alone moved FTS5 nDCG from 0.003 to 0.638.
 
 ### Benchmarks
 
@@ -457,6 +461,20 @@ conn = connect("my.db")  # or connect("my.db", readonly=True)
 ```
 
 Applies all best practices automatically: WAL journal mode, 30s busy timeout, NORMAL synchronous, 64MB page cache, foreign key enforcement. Use this for any project that touches SQLite.
+
+### Index: document/chunk storage
+
+```python
+from limbic.amygdala.index import Index
+
+idx = Index("my_index.db")
+idx.add_document("file.md", chunks=[{"content": "text"}])
+results = idx.search("query", embedding_model=model)  # hybrid search
+results = idx.grep("/path/to/file")  # exact substring search
+idx.rebuild_fts()  # one-time FTS rebuild for pre-trigger databases
+```
+
+The `Index` class uses SQLite triggers to keep FTS5 in sync automatically — no manual sync needed.
 
 ---
 

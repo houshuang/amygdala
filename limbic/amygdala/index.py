@@ -66,6 +66,16 @@ CREATE INDEX IF NOT EXISTS idx_chunks_collection ON chunks(collection);
 CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
     content, content_rowid='rowid', tokenize='porter unicode61'
 );
+CREATE TRIGGER IF NOT EXISTS chunks_fts_ai AFTER INSERT ON chunks BEGIN
+    INSERT INTO chunks_fts(rowid, content) VALUES (new.rowid, new.content);
+END;
+CREATE TRIGGER IF NOT EXISTS chunks_fts_ad AFTER DELETE ON chunks BEGIN
+    DELETE FROM chunks_fts WHERE rowid = old.rowid;
+END;
+CREATE TRIGGER IF NOT EXISTS chunks_fts_au AFTER UPDATE OF content ON chunks BEGIN
+    DELETE FROM chunks_fts WHERE rowid = old.rowid;
+    INSERT INTO chunks_fts(rowid, content) VALUES (new.rowid, new.content);
+END;
 """
 
 
@@ -99,7 +109,6 @@ class Index:
                 "INSERT INTO chunks (doc_path,content,metadata,collection,embedding) VALUES (?,?,?,?,?)",
                 (path, chunk["content"], json.dumps(chunk.get("metadata", {})), collection, blob))
         self.conn.commit()
-        self._sync_fts_for(path)
         self._vi_dirty = True
 
     def add_claims(self, claims: list[dict], collection: str = "claims"):
@@ -119,39 +128,12 @@ class Index:
                 "INSERT INTO chunks (doc_path,content,metadata,collection,embedding) VALUES (?,?,?,?,?)",
                 (dp, c["content"], json.dumps(c.get("metadata", {})), collection, blob))
         self.conn.commit()
-        for dp in doc_paths:
-            self._sync_fts_for(dp)
         self._vi_dirty = True
 
-    def _sync_fts_for(self, doc_path: str):
-        """Incrementally sync FTS index for chunks belonging to doc_path."""
-        # Get current chunk rowids for this doc
-        chunk_rows = self.conn.execute(
-            "SELECT rowid as rid, content FROM chunks WHERE doc_path = ?", (doc_path,)
-        ).fetchall()
-        new_rowids = {r["rid"] for r in chunk_rows}
-        # Get existing FTS rowids for this doc's chunks
-        if new_rowids:
-            ph = ",".join("?" * len(new_rowids))
-            existing = self.conn.execute(
-                f"SELECT rowid FROM chunks_fts WHERE rowid IN ({ph})", list(new_rowids)
-            ).fetchall()
-            existing_rowids = {r[0] for r in existing}
-        else:
-            existing_rowids = set()
-        # Delete stale FTS entries (chunks that were removed)
-        old_rowids = self.conn.execute(
-            "SELECT f.rowid FROM chunks_fts f LEFT JOIN chunks c ON f.rowid = c.rowid WHERE c.rowid IS NULL"
-        ).fetchall()
-        for r in old_rowids:
-            self.conn.execute("DELETE FROM chunks_fts WHERE rowid = ?", (r[0],))
-        # Insert new FTS entries
-        for r in chunk_rows:
-            if r["rid"] not in existing_rowids:
-                self.conn.execute(
-                    "INSERT OR REPLACE INTO chunks_fts (rowid, content) VALUES (?,?)",
-                    (r["rid"], r["content"])
-                )
+    def rebuild_fts(self):
+        """Rebuild FTS index from scratch. Use for databases created before triggers existed."""
+        self.conn.execute("DELETE FROM chunks_fts")
+        self.conn.execute("INSERT INTO chunks_fts(rowid, content) SELECT rowid, content FROM chunks")
         self.conn.commit()
 
     def _build_vector_index(self, collection: str | None = None) -> VectorIndex:
@@ -178,7 +160,7 @@ class Index:
         import re
         tokens = re.findall(r'[\w]+', query, re.UNICODE)
         tokens = [t for t in tokens if len(t) > 1 and not t.isdigit()]
-        return " OR ".join(tokens) if tokens else ""
+        return " OR ".join(f'"{t}"' for t in tokens) if tokens else ""
 
     def _fts_search(self, query: str, limit: int = 10, collection: str | None = None) -> list[Result]:
         query = self._sanitize_query(query)
@@ -197,6 +179,21 @@ class Index:
             return []
         return [Result(id=str(r["id"]), score=-r["rank"], content=r["content"],
                        metadata=json.loads(r["metadata"]), source="fts") for r in rows]
+
+    def grep(self, pattern: str, limit: int = 10, collection: str | None = None) -> list[Result]:
+        """Exact substring search via SQL LIKE. For file paths, error messages, code."""
+        if not pattern.strip():
+            return []
+        q = "SELECT id, content, metadata FROM chunks WHERE content LIKE '%' || ? || '%'"
+        params: list = [pattern]
+        if collection:
+            q += " AND collection = ?"
+            params.append(collection)
+        q += " LIMIT ?"
+        params.append(limit)
+        rows = self.conn.execute(q, params).fetchall()
+        return [Result(id=str(r["id"]), score=1.0, content=r["content"],
+                       metadata=json.loads(r["metadata"]), source="grep") for r in rows]
 
     def search(self, query: str, embedding_model=None, limit: int = 10,
                collection: str | None = None, hybrid: bool = True) -> list[Result]:

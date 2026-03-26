@@ -19,6 +19,7 @@ Usage:
 import json
 import re
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -131,7 +132,7 @@ class FTS5Index:
         """
         tokens = re.findall(r'[\w]+', query, re.UNICODE)
         tokens = [t for t in tokens if len(t) > 1 and not t.isdigit()]
-        return " OR ".join(tokens) if tokens else ""
+        return " OR ".join(f'"{t}"' for t in tokens) if tokens else ""
 
     def search(self, query: str, limit: int = 10) -> list[Result]:
         sanitized = self._sanitize_query(query)
@@ -198,6 +199,19 @@ class HybridSearch:
         return [Result(id=id_, score=scores[id_], content=content_map.get(id_, ""),
                        metadata=metadata_map.get(id_, {}), source="hybrid")
                 for id_ in top_ids]
+
+
+def dedup_by(results: list[Result], key_fn: Callable[[Result], str]) -> list[Result]:
+    """Keep only the first (highest-scored) result per group defined by key_fn.
+
+    Assumes results are already sorted by score descending.
+    """
+    seen: dict[str, Result] = {}
+    for r in results:
+        key = key_fn(r)
+        if key not in seen:
+            seen[key] = r
+    return list(seen.values())
 
 
 _rerank_cache: dict[str, "CrossEncoder"] = {}
