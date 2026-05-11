@@ -31,8 +31,10 @@ import re
 import shutil
 import subprocess
 import time
+import hashlib
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from .cost_log import cost_log
@@ -77,6 +79,7 @@ def _build_cmd(
     max_budget: float | None,
     work_dir: str | None,
     dangerously_skip_permissions: bool,
+    minimal_headless: bool,
 ) -> list[str]:
     cmd = [
         "claude", "-p",
@@ -84,6 +87,14 @@ def _build_cmd(
         "--no-session-persistence",
         "--model", model,
     ]
+    if minimal_headless:
+        cmd.extend([
+            "--strict-mcp-config",
+            "--mcp-config", '{"mcpServers":{}}',
+            "--disable-slash-commands",
+            "--no-chrome",
+            "--setting-sources", "local",
+        ])
     if tools is not None:
         cmd.extend(["--tools", tools])
     if allowed_tools:
@@ -109,6 +120,7 @@ def log_cli_usage(
     project: str,
     purpose: str = "",
     requested_model: str = "",
+    extra_metadata: dict[str, Any] | None = None,
 ) -> None:
     """Public helper: write cost_log rows from a `claude -p --output-format json` response.
 
@@ -125,10 +137,13 @@ def log_cli_usage(
     base_metadata: dict[str, Any] = {
         "session_id": session_id,
         "duration_ms": response.get("duration_ms"),
+        "duration_api_ms": response.get("duration_api_ms"),
         "num_turns": response.get("num_turns"),
         "headless": True,
         "requested_model": requested_model,
     }
+    if extra_metadata:
+        base_metadata.update(extra_metadata)
     if response.get("is_error"):
         base_metadata["failed"] = True
 
@@ -139,6 +154,9 @@ def log_cli_usage(
             wsr = usage.get("webSearchRequests", 0)
             if wsr:
                 metadata["web_search_requests"] = wsr
+            cache_creation = int(usage.get("cacheCreationInputTokens", 0) or 0)
+            if cache_creation:
+                metadata["cache_creation_tokens"] = cache_creation
             try:
                 cost_log.log(
                     project=project,
@@ -170,6 +188,99 @@ def log_cli_usage(
         )
     except Exception as e:
         log.warning("cost_log.log failed for session %s: %s", session_id, e)
+
+
+def _debug_file_metadata(session_id: str | None) -> dict[str, Any]:
+    """Return Claude Code debug-file metadata when the session log exists."""
+    if not session_id:
+        return {}
+    path = Path.home() / ".claude" / "debug" / f"{session_id}.txt"
+    if not path.exists():
+        return {}
+    try:
+        stat = path.stat()
+    except OSError:
+        return {"debug_file": str(path)}
+    return {"debug_file": str(path), "debug_file_bytes": stat.st_size}
+
+
+def _safe_hash(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
+
+
+def _invocation_metadata(
+    *,
+    prompt: str,
+    system: str,
+    schema: dict | None,
+    model: str,
+    tools: str | None,
+    allowed_tools: str | None,
+    max_turns: int | None,
+    max_budget: float | None,
+    work_dir: str | None,
+    dangerously_skip_permissions: bool,
+    minimal_headless: bool,
+    timeout: int,
+) -> dict[str, Any]:
+    schema_json = json.dumps(schema, sort_keys=True) if schema else ""
+    metadata: dict[str, Any] = {
+        "prompt_chars": len(prompt),
+        "prompt_sha256": _safe_hash(prompt),
+        "system_chars": len(system or ""),
+        "schema_chars": len(schema_json),
+        "requested_model": model,
+        "tools": tools,
+        "allowed_tools": allowed_tools,
+        "max_turns": max_turns,
+        "max_budget_usd": max_budget,
+        "work_dir": work_dir,
+        "dangerously_skip_permissions": dangerously_skip_permissions,
+        "minimal_headless": minimal_headless,
+        "timeout_s": timeout,
+    }
+    if system:
+        metadata["system_sha256"] = _safe_hash(system)
+    if schema_json:
+        metadata["schema_sha256"] = _safe_hash(schema_json)
+    return {k: v for k, v in metadata.items() if v is not None}
+
+
+def _log_cli_failure(
+    *,
+    project: str,
+    purpose: str,
+    requested_model: str,
+    error_type: str,
+    error: str,
+    returncode: int | None = None,
+    extra_metadata: dict[str, Any] | None = None,
+) -> None:
+    metadata = {
+        "failed": True,
+        "headless": True,
+        "requested_model": requested_model,
+        "error_type": error_type,
+        "error": error[:500],
+    }
+    if returncode is not None:
+        metadata["returncode"] = returncode
+    if extra_metadata:
+        metadata.update(extra_metadata)
+    try:
+        cost_log.log(
+            project=project,
+            model=requested_model,
+            prompt_tokens=0,
+            completion_tokens=0,
+            cached_tokens=0,
+            cost_usd=0.0,
+            script="claude-cli",
+            purpose=purpose,
+            metadata=metadata,
+        )
+    except Exception as e:
+        log.warning("cost_log.log failed for claude failure row: %s", e)
 
 
 _FENCE_RE = re.compile(r"```(?:json)?\s*\n?([\s\S]*?)\n?\s*```")
@@ -212,6 +323,7 @@ def generate(
     max_budget: float | None = None,
     work_dir: str | None = None,
     dangerously_skip_permissions: bool = False,
+    minimal_headless: bool = True,
     timeout: int = 120,
 ) -> tuple[Any, dict]:
     """Run a single `claude -p` invocation.
@@ -256,6 +368,21 @@ def generate(
         max_budget=max_budget,
         work_dir=work_dir,
         dangerously_skip_permissions=dangerously_skip_permissions,
+        minimal_headless=minimal_headless,
+    )
+    invocation_meta = _invocation_metadata(
+        prompt=prompt,
+        system=system,
+        schema=schema,
+        model=model,
+        tools=tools,
+        allowed_tools=allowed_tools,
+        max_turns=max_turns,
+        max_budget=max_budget,
+        work_dir=work_dir,
+        dangerously_skip_permissions=dangerously_skip_permissions,
+        minimal_headless=minimal_headless,
+        timeout=timeout,
     )
 
     start = time.time()
@@ -269,6 +396,14 @@ def generate(
             env=_ENV,
         )
     except subprocess.TimeoutExpired as e:
+        _log_cli_failure(
+            project=project,
+            purpose=purpose,
+            requested_model=model,
+            error_type="timeout",
+            error=f"claude timed out after {timeout}s",
+            extra_metadata=invocation_meta,
+        )
         raise ClaudeCLIError(f"claude timed out after {timeout}s") from e
     elapsed = time.time() - start
 
@@ -280,11 +415,15 @@ def generate(
             response = None
 
     if isinstance(response, dict):
+        response_meta = dict(invocation_meta)
+        response_meta.update(_debug_file_metadata(response.get("session_id")))
+        response_meta["returncode"] = proc.returncode
         log_cli_usage(
             response,
             project=project,
             purpose=purpose,
             requested_model=model,
+            extra_metadata=response_meta,
         )
 
     if proc.returncode != 0:
@@ -292,6 +431,15 @@ def generate(
             f"claude exited {proc.returncode}: {proc.stderr[:300] or proc.stdout[:300]}"
         )
     if response is None:
+        _log_cli_failure(
+            project=project,
+            purpose=purpose,
+            requested_model=model,
+            error_type="unparseable_output",
+            error=proc.stdout[:300] or proc.stderr[:300],
+            returncode=proc.returncode,
+            extra_metadata=invocation_meta,
+        )
         raise ClaudeCLIError(
             f"claude returned unparseable output: {proc.stdout[:300]}"
         )
@@ -339,6 +487,7 @@ class Task:
     max_budget: float | None = None
     work_dir: str | None = None
     dangerously_skip_permissions: bool = False
+    minimal_headless: bool = True
     timeout: int = 120
     tag: str = ""
 
@@ -373,6 +522,7 @@ def generate_parallel(
                 max_budget=task.max_budget,
                 work_dir=task.work_dir,
                 dangerously_skip_permissions=task.dangerously_skip_permissions,
+                minimal_headless=task.minimal_headless,
                 timeout=task.timeout,
             )
             if task.tag:

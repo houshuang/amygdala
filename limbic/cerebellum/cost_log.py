@@ -447,7 +447,7 @@ _DASHBOARD_HTML = """\
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
 <style>
   :root { --bg: #f7f4ec; --ink: #2a2420; --muted: #6a6458; --accent: #8b2500;
-          --rule: #e4dfd4; --card: #fff; --green: #2a7a4a; }
+          --rule: #e4dfd4; --card: #fff; --green: #2a7a4a; --blue: #4a6fa5; }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { font-family: 'DM Sans', -apple-system, sans-serif; background: var(--bg);
          color: var(--ink); max-width: 1100px; margin: 0 auto; padding: 24px; }
@@ -456,17 +456,25 @@ _DASHBOARD_HTML = """\
   .sync-btn { background: var(--accent); color: #fff; border: none; padding: 6px 16px;
               border-radius: 4px; cursor: pointer; font-size: 13px; float: right; margin-top: -38px; }
   .sync-btn:hover { opacity: 0.85; }
-  .totals { display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
+  .section-label { font-size: 11px; color: var(--muted); text-transform: uppercase;
+                   letter-spacing: 0.08em; margin-bottom: 8px; font-weight: 600; }
+  .totals { display: flex; gap: 16px; margin-bottom: 12px; flex-wrap: wrap; }
   .total-card { background: var(--card); border: 1px solid var(--rule); border-radius: 8px;
-                padding: 16px 20px; flex: 1; min-width: 140px; }
+                padding: 16px 20px; flex: 1; min-width: 120px; }
   .total-card .label { font-size: 11px; color: var(--muted); text-transform: uppercase;
                        letter-spacing: 0.05em; }
   .total-card .value { font-size: 28px; font-weight: 600; margin-top: 4px; }
   .total-card .value.cost { color: var(--accent); }
+  .total-card .value.cli { color: var(--blue); }
+  .total-card.cli-card { border-color: #c8d8e8; }
   .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 24px; }
   @media (max-width: 700px) { .grid { grid-template-columns: 1fr; } }
   .panel { background: var(--card); border: 1px solid var(--rule); border-radius: 8px; padding: 20px; }
   .panel h2 { font-size: 14px; font-weight: 600; margin-bottom: 12px; }
+  .panel h2 .badge { font-size: 10px; font-weight: 500; padding: 2px 6px; border-radius: 3px;
+                     margin-left: 6px; vertical-align: middle; }
+  .badge-api { background: #f5e6e2; color: var(--accent); }
+  .badge-cli { background: #e2eaf5; color: var(--blue); }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
   th { text-align: left; color: var(--muted); font-weight: 500; padding: 6px 8px;
        border-bottom: 1px solid var(--rule); font-size: 11px; text-transform: uppercase; }
@@ -478,6 +486,10 @@ _DASHBOARD_HTML = """\
   canvas { max-height: 260px; }
   .chart-panel { grid-column: 1 / -1; }
   .last-sync { font-size: 11px; color: var(--muted); }
+  .spacer { height: 12px; }
+  .wide { grid-column: 1 / -1; }
+  .muted { color: var(--muted); }
+  .warn { color: var(--accent); font-weight: 600; }
 </style>
 </head>
 <body>
@@ -497,26 +509,46 @@ _DASHBOARD_HTML = """\
   </select>
 </div>
 
-<div class="totals" id="totals"></div>
+<div class="section-label">API Usage (billed)</div>
+<div class="totals" id="api-totals"></div>
+<div class="spacer"></div>
+<div class="section-label">Claude CLI Usage (subscription)</div>
+<div class="totals" id="cli-totals"></div>
 
 <div class="grid">
   <div class="panel chart-panel">
-    <h2>Daily Cost</h2>
+    <h2>Daily API Cost</h2>
     <canvas id="daily-chart"></canvas>
   </div>
   <div class="panel">
-    <h2>By Project</h2>
+    <h2>By Project <span class="badge badge-api">API</span></h2>
     <table id="by-project"></table>
   </div>
   <div class="panel">
-    <h2>By Model</h2>
+    <h2>By Model <span class="badge badge-api">API</span></h2>
     <table id="by-model"></table>
   </div>
   <div class="panel">
-    <h2>By Host</h2>
+    <h2>By API Key</h2>
+    <table id="by-api-key"></table>
+  </div>
+  <div class="panel">
+    <h2>By Host <span class="badge badge-api">API</span></h2>
     <table id="by-host"></table>
   </div>
   <div class="panel">
+    <h2>CLI by Project <span class="badge badge-cli">CLI</span></h2>
+    <table id="cli-by-project"></table>
+  </div>
+  <div class="panel">
+    <h2>CLI by Model <span class="badge badge-cli">CLI</span></h2>
+    <table id="cli-by-model"></table>
+  </div>
+  <div class="panel wide">
+    <h2>CLI by Purpose <span class="badge badge-cli">CLI</span></h2>
+    <table id="cli-by-purpose"></table>
+  </div>
+  <div class="panel wide">
     <h2>Recent Calls</h2>
     <table id="recent"></table>
   </div>
@@ -531,8 +563,21 @@ async function api(path) {
   return r.json();
 }
 
-function fmt(n) { return '$' + n.toFixed(4); }
-function fmtK(n) { return n >= 1000 ? (n/1000).toFixed(1) + 'k' : n.toString(); }
+function fmt(n) {
+  n = Number(n || 0);
+  if (Math.abs(n) >= 1000) return '$' + Math.round(n).toLocaleString('en-US');
+  if (Math.abs(n) >= 10) return '$' + n.toFixed(2);
+  if (Math.abs(n) >= 1) return '$' + n.toFixed(3);
+  if (n > 0) return '$' + n.toFixed(4);
+  return '$0';
+}
+function fmtK(n) {
+  n = Number(n || 0);
+  if (Math.abs(n) >= 1000000) return (n/1000000).toFixed(1) + 'M';
+  if (Math.abs(n) >= 1000) return (n/1000).toFixed(1) + 'k';
+  return n.toLocaleString('en-US');
+}
+function warnIf(cond, value) { return cond ? `<span class="warn">${value}</span>` : value; }
 
 function renderTable(id, rows, cols) {
   const el = $(id);
@@ -550,36 +595,87 @@ async function reload() {
   const days = $('days').value;
   const d = await api('summary?days=' + days);
 
-  // Totals
-  $('totals').innerHTML = `
-    <div class="total-card"><div class="label">Total Cost</div><div class="value cost">${fmt(d.total_usd)}</div></div>
-    <div class="total-card"><div class="label">API Calls</div><div class="value">${d.total_calls.toLocaleString()}</div></div>
-    <div class="total-card"><div class="label">Prompt Tokens</div><div class="value">${fmtK(d.total_prompt)}</div></div>
-    <div class="total-card"><div class="label">Completion Tokens</div><div class="value">${fmtK(d.total_completion)}</div></div>
+  // API totals
+  $('api-totals').innerHTML = `
+    <div class="total-card"><div class="label">API Cost</div><div class="value cost">${fmt(d.api.cost_usd)}</div></div>
+    <div class="total-card"><div class="label">API Calls</div><div class="value">${d.api.calls.toLocaleString()}</div></div>
+    <div class="total-card"><div class="label">Prompt Tokens</div><div class="value">${fmtK(d.api.prompt_tokens)}</div></div>
+    <div class="total-card"><div class="label">Completion Tokens</div><div class="value">${fmtK(d.api.completion_tokens)}</div></div>
   `;
+
+  // CLI totals
+  $('cli-totals').innerHTML = `
+    <div class="total-card cli-card"><div class="label">Subscription Value</div><div class="value cli">${fmt(d.cli.cost_usd)}</div></div>
+    <div class="total-card cli-card"><div class="label">Sessions</div><div class="value cli">${d.cli.sessions.toLocaleString()}</div></div>
+    <div class="total-card cli-card"><div class="label">Calls</div><div class="value cli">${d.cli.calls.toLocaleString()}</div></div>
+    <div class="total-card cli-card"><div class="label">Visible Tokens</div><div class="value cli">${fmtK(d.cli.visible_tokens)}</div></div>
+    <div class="total-card cli-card"><div class="label">Cached Tokens</div><div class="value cli">${fmtK(d.cli.cached_tokens)}</div></div>
+    <div class="total-card cli-card"><div class="label">Total Tokens</div><div class="value cli">${fmtK(d.cli.total_tokens)}</div></div>
+    <div class="total-card cli-card"><div class="label">Total Duration</div><div class="value cli">${d.cli.duration_min}m</div></div>
+  `;
+
   $('db-path').textContent = d.db_path;
   $('last-sync').textContent = 'Last sync: ' + (d.last_sync || 'never');
 
-  const cols = [
+  const costCols = [
     ['Name', r => r.grp, ''],
     ['Calls', r => r.calls.toLocaleString(), 'num'],
     ['Cost', r => fmt(r.cost_usd), 'num'],
   ];
-  renderTable('by-project', d.by_project, cols);
-  renderTable('by-model', d.by_model, cols);
-  renderTable('by-host', d.by_host, cols);
+  renderTable('by-project', d.api.by_project, costCols);
+  renderTable('by-model', d.api.by_model, costCols);
+  renderTable('by-host', d.api.by_host, costCols);
+
+  // By API key
+  renderTable('by-api-key', d.api.by_key, [
+    ['Key', r => r.grp || '(none)', ''],
+    ['Calls', r => r.calls.toLocaleString(), 'num'],
+    ['Cost', r => fmt(r.cost_usd), 'num'],
+  ]);
+
+  // CLI tables
+  renderTable('cli-by-project', d.cli.by_project, [
+    ['Name', r => r.grp, ''],
+    ['Sessions', r => r.sessions.toLocaleString(), 'num'],
+    ['Visible', r => fmtK(r.visible_tokens), 'num'],
+    ['Cached', r => fmtK(r.cached_tokens), 'num'],
+    ['Total', r => fmtK(r.total_tokens), 'num'],
+    ['Sub Value', r => fmt(r.cost_usd), 'num'],
+  ]);
+  renderTable('cli-by-model', d.cli.by_model, [
+    ['Model', r => r.grp, ''],
+    ['Calls', r => r.calls.toLocaleString(), 'num'],
+    ['Visible', r => fmtK(r.visible_tokens), 'num'],
+    ['Cached', r => fmtK(r.cached_tokens), 'num'],
+    ['Total', r => fmtK(r.total_tokens), 'num'],
+    ['Sub Value', r => fmt(r.cost_usd), 'num'],
+  ]);
+  renderTable('cli-by-purpose', d.cli.by_purpose, [
+    ['Purpose', r => r.grp || '(none)', ''],
+    ['Sessions', r => r.sessions.toLocaleString(), 'num'],
+    ['Calls', r => r.calls.toLocaleString(), 'num'],
+    ['Visible', r => fmtK(r.visible_tokens), 'num'],
+    ['Cached', r => warnIf(r.avg_cached_tokens >= 50000, fmtK(r.cached_tokens)), 'num'],
+    ['Avg Cached', r => warnIf(r.avg_cached_tokens >= 10000, fmtK(r.avg_cached_tokens)), 'num'],
+    ['Avg Turns', r => Number(r.avg_turns || 0).toFixed(1), 'num'],
+    ['Sub Value', r => fmt(r.cost_usd), 'num'],
+  ]);
 
   // Recent calls
   const recent = await api('recent?days=' + days);
   renderTable('recent', recent.slice(0, 20), [
     ['Time', r => r.ts.slice(5, 16).replace('T', ' '), ''],
+    ['Src', r => r.script === 'claude-cli' ? 'CLI' : 'API', ''],
     ['Project', r => r.project, ''],
+    ['Purpose', r => r.purpose || '', ''],
     ['Model', r => r.model.replace('gemini/', ''), ''],
-    ['Tokens', r => fmtK(r.prompt_tokens + r.completion_tokens), 'num'],
+    ['Visible', r => fmtK(r.visible_tokens), 'num'],
+    ['Cached', r => warnIf(r.cached_tokens >= 10000, fmtK(r.cached_tokens)), 'num'],
+    ['Total', r => fmtK(r.total_tokens), 'num'],
     ['Cost', r => fmt(r.cost_usd), 'num'],
   ]);
 
-  // Daily chart
+  // Daily chart (API only)
   const daily = await api('daily?days=' + days);
   if (dailyChart) dailyChart.destroy();
   const projects = [...new Set(daily.flatMap(d => Object.keys(d.projects)))];
@@ -596,7 +692,7 @@ async function reload() {
     },
     options: {
       responsive: true, maintainAspectRatio: false,
-      scales: { x: { stacked: true }, y: { stacked: true, ticks: { callback: v => '$' + v.toFixed(2) } } },
+      scales: { x: { stacked: true }, y: { stacked: true, ticks: { callback: v => fmt(v) } } },
       plugins: { legend: { position: 'bottom', labels: { boxWidth: 12, font: { size: 11 } } } },
     },
   });
@@ -620,6 +716,121 @@ reload();
 </body>
 </html>
 """
+
+
+def _build_summary(cl: CostLog, days: int | None) -> dict:
+    """Build the split API/CLI summary payload for the dashboard."""
+    conn = cl._connect()
+    clauses, params = [], []
+    if days:
+        cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime(
+            "%Y-%m-%dT%H:%M:%SZ")
+        clauses.append("ts >= ?")
+        params.append(cutoff)
+    api_where = (" WHERE " + " AND ".join(clauses + ["script != 'claude-cli'"])
+                 if clauses else " WHERE script != 'claude-cli'")
+    cli_where = (" WHERE " + " AND ".join(clauses + ["script = 'claude-cli'"])
+                 if clauses else " WHERE script = 'claude-cli'")
+
+    def _grouped(where, params, group_col):
+        rows = conn.execute(f"""
+            SELECT {group_col} AS grp, COUNT(*) AS calls,
+                   SUM(prompt_tokens) AS prompt_tokens,
+                   SUM(completion_tokens) AS completion_tokens,
+                   SUM(cost_usd) AS cost_usd
+            FROM llm_costs{where}
+            GROUP BY {group_col} ORDER BY cost_usd DESC
+        """, params).fetchall()
+        return [dict(r) for r in rows]
+
+    # API aggregates
+    api_row = conn.execute(f"""
+        SELECT COUNT(*) AS calls,
+               COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+               COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+               COALESCE(SUM(cost_usd), 0) AS cost_usd
+        FROM llm_costs{api_where}
+    """, params).fetchone()
+
+    # CLI aggregates
+    cli_row = conn.execute(f"""
+        SELECT COUNT(*) AS calls,
+               COALESCE(SUM(prompt_tokens + completion_tokens), 0) AS visible_tokens,
+               COALESCE(SUM(cached_tokens), 0) AS cached_tokens,
+               COALESCE(SUM(prompt_tokens + completion_tokens + cached_tokens), 0) AS total_tokens,
+               COALESCE(SUM(cost_usd), 0) AS cost_usd,
+               COUNT(DISTINCT json_extract(metadata, '$.session_id')) AS sessions,
+               COALESCE(SUM(json_extract(metadata, '$.duration_ms')), 0) AS duration_ms
+        FROM llm_costs{cli_where}
+    """, params).fetchone()
+
+    # CLI grouped by project (with session counts)
+    cli_by_project = conn.execute(f"""
+        SELECT project AS grp, COUNT(*) AS calls,
+               COUNT(DISTINCT json_extract(metadata, '$.session_id')) AS sessions,
+               SUM(prompt_tokens + completion_tokens) AS visible_tokens,
+               SUM(cached_tokens) AS cached_tokens,
+               SUM(prompt_tokens + completion_tokens + cached_tokens) AS total_tokens,
+               SUM(cost_usd) AS cost_usd
+        FROM llm_costs{cli_where}
+        GROUP BY project ORDER BY cost_usd DESC
+    """, params).fetchall()
+
+    # CLI grouped by model
+    cli_by_model = conn.execute(f"""
+        SELECT model AS grp, COUNT(*) AS calls,
+               SUM(prompt_tokens + completion_tokens) AS visible_tokens,
+               SUM(cached_tokens) AS cached_tokens,
+               SUM(prompt_tokens + completion_tokens + cached_tokens) AS total_tokens,
+               SUM(cost_usd) AS cost_usd
+        FROM llm_costs{cli_where}
+        GROUP BY model ORDER BY cost_usd DESC
+    """, params).fetchall()
+
+    # CLI grouped by purpose.  This is the main view for finding inefficient
+    # workflows: many one-turn sessions with high cached-token reads.
+    cli_by_purpose = conn.execute(f"""
+        SELECT COALESCE(purpose, '') AS grp,
+               COUNT(*) AS calls,
+               COUNT(DISTINCT json_extract(metadata, '$.session_id')) AS sessions,
+               SUM(prompt_tokens + completion_tokens) AS visible_tokens,
+               SUM(cached_tokens) AS cached_tokens,
+               SUM(prompt_tokens + completion_tokens + cached_tokens) AS total_tokens,
+               AVG(cached_tokens) AS avg_cached_tokens,
+               AVG(prompt_tokens + completion_tokens) AS avg_visible_tokens,
+               AVG(json_extract(metadata, '$.num_turns')) AS avg_turns,
+               SUM(cost_usd) AS cost_usd
+        FROM llm_costs{cli_where}
+        GROUP BY COALESCE(purpose, '')
+        ORDER BY cost_usd DESC
+    """, params).fetchall()
+
+    return {
+        "api": {
+            "cost_usd": api_row["cost_usd"],
+            "calls": api_row["calls"],
+            "prompt_tokens": api_row["prompt_tokens"],
+            "completion_tokens": api_row["completion_tokens"],
+            "by_project": _grouped(api_where, params, "project"),
+            "by_model": _grouped(api_where, params, "model"),
+            "by_host": _grouped(api_where, params, "host"),
+            "by_key": _grouped(api_where, params, "api_key_hint"),
+        },
+        "cli": {
+            "sessions": cli_row["sessions"],
+            "calls": cli_row["calls"],
+            "visible_tokens": cli_row["visible_tokens"],
+            "cached_tokens": cli_row["cached_tokens"],
+            "total_tokens": cli_row["total_tokens"],
+            "cost_usd": cli_row["cost_usd"],
+            "duration_min": round(cli_row["duration_ms"] / 60_000, 1),
+            "by_project": [dict(r) for r in cli_by_project],
+            "by_model": [dict(r) for r in cli_by_model],
+            "by_purpose": [dict(r) for r in cli_by_purpose],
+        },
+        "db_path": str(cl.db_path),
+        "last_sync": _last_sync_time(),
+    }
 
 
 def _serve_dashboard(port: int = 8042, open_browser: bool = True):
@@ -665,32 +876,35 @@ def _serve_dashboard(port: int = 8042, open_browser: bool = True):
                 self.wfile.write(body)
 
             elif parsed.path == "/api/summary":
-                total_rows = cl.query(days=days)
-                self._json({
-                    "total_usd": cl.total(days=days),
-                    "total_calls": len(total_rows),
-                    "total_prompt": sum(r["prompt_tokens"] for r in total_rows),
-                    "total_completion": sum(r["completion_tokens"] for r in total_rows),
-                    "by_project": cl.summary(days=days, group_by="project"),
-                    "by_model": cl.summary(days=days, group_by="model"),
-                    "by_host": cl.summary(days=days, group_by="host"),
-                    "db_path": str(cl.db_path),
-                    "last_sync": _last_sync_time(),
-                })
+                self._json(_build_summary(cl, days))
 
             elif parsed.path == "/api/recent":
                 rows = cl.query(days=days)[:50]
-                self._json([dict(r) for r in rows])
+                recent = []
+                for row in rows:
+                    d = dict(row)
+                    d["visible_tokens"] = d["prompt_tokens"] + d["completion_tokens"]
+                    d["total_tokens"] = d["visible_tokens"] + d["cached_tokens"]
+                    try:
+                        meta = json.loads(d.get("metadata") or "{}")
+                    except json.JSONDecodeError:
+                        meta = {}
+                    d["session_id"] = meta.get("session_id")
+                    d["debug_file_bytes"] = meta.get("debug_file_bytes")
+                    d["failed"] = bool(meta.get("failed"))
+                    recent.append(d)
+                self._json(recent)
 
             elif parsed.path == "/api/daily":
                 conn = cl._connect()
-                clauses, params = [], []
+                clauses = ["script != 'claude-cli'"]
+                params = []
                 if days:
                     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime(
                         "%Y-%m-%dT%H:%M:%SZ")
                     clauses.append("ts >= ?")
                     params.append(cutoff)
-                where = " WHERE " + " AND ".join(clauses) if clauses else ""
+                where = " WHERE " + " AND ".join(clauses)
                 rows = conn.execute(f"""
                     SELECT substr(ts, 1, 10) AS date, project,
                            SUM(cost_usd) AS cost
@@ -794,11 +1008,13 @@ def _cli():
             if not rows:
                 print("  (no data)")
                 return
-            print(f"  {'Group':<30} {'Calls':>7} {'Prompt':>10} {'Compl':>10} {'Cost':>10}")
-            print(f"  {'-'*30} {'-'*7} {'-'*10} {'-'*10} {'-'*10}")
+            print(f"  {'Group':<30} {'Calls':>7} {'Prompt':>10} {'Compl':>10} {'Cached':>10} {'Total':>10} {'Cost':>10}")
+            print(f"  {'-'*30} {'-'*7} {'-'*10} {'-'*10} {'-'*10} {'-'*10} {'-'*10}")
             for r in rows:
+                total_tokens = r["prompt_tokens"] + r["completion_tokens"] + r["cached_tokens"]
                 print(f"  {r['grp']:<30} {r['calls']:>7} {r['prompt_tokens']:>10,}"
-                      f" {r['completion_tokens']:>10,} ${r['cost_usd']:>9.4f}")
+                      f" {r['completion_tokens']:>10,} {r['cached_tokens']:>10,}"
+                      f" {total_tokens:>10,} ${r['cost_usd']:>9.4f}")
             print()
 
     elif args.cmd == "sync":

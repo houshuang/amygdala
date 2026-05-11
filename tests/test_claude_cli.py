@@ -110,6 +110,12 @@ class TestGenerateHappyPath:
         assert metadata["session_id"] == "test-session-single"
         assert metadata["headless"] is True
         assert metadata["requested_model"] == "haiku"
+        assert metadata["prompt_chars"] == 4
+        assert metadata["prompt_sha256"]
+        assert metadata["system_chars"] == 0
+        assert metadata["schema_chars"] == 0
+        assert metadata["minimal_headless"] is True
+        assert metadata["cache_creation_tokens"] == 30337
         assert "failed" not in metadata
 
     def test_schema_structured_output(self, tmp_cost_log):
@@ -225,13 +231,18 @@ class TestGenerateErrors:
         assert len(rows) == 1
         assert json.loads(rows[0]["metadata"])["failed"] is True
 
-    def test_unparseable_output_raises_no_log(self, tmp_cost_log):
+    def test_unparseable_output_raises_and_logs_failure_row(self, tmp_cost_log):
         with patch.object(subprocess, "run", return_value=_completed("not json at all")):
             with pytest.raises(ClaudeCLIError, match="unparseable output"):
                 generate(prompt="hi", project="testproj")
 
         rows = tmp_cost_log.query()
-        assert rows == []
+        assert len(rows) == 1
+        assert rows[0]["cost_usd"] == 0
+        metadata = json.loads(rows[0]["metadata"])
+        assert metadata["failed"] is True
+        assert metadata["error_type"] == "unparseable_output"
+        assert metadata["prompt_chars"] == 2
 
     def test_timeout_raises(self, tmp_cost_log):
         def _boom(*a, **kw):
@@ -240,6 +251,12 @@ class TestGenerateErrors:
         with patch.object(subprocess, "run", side_effect=_boom):
             with pytest.raises(ClaudeCLIError, match="timed out"):
                 generate(prompt="hi", project="testproj", timeout=1)
+
+        rows = tmp_cost_log.query()
+        assert len(rows) == 1
+        metadata = json.loads(rows[0]["metadata"])
+        assert metadata["failed"] is True
+        assert metadata["error_type"] == "timeout"
 
 
 # ---------------------------------------------------------------------------
@@ -266,6 +283,13 @@ class TestCommandBuilding:
         assert "--output-format" in cmd and "json" in cmd
         assert "--no-session-persistence" in cmd
         assert "--model" in cmd and "haiku" in cmd
+        assert "--strict-mcp-config" in cmd
+        assert "--mcp-config" in cmd
+        assert json.loads(cmd[cmd.index("--mcp-config") + 1]) == {"mcpServers": {}}
+        assert "--disable-slash-commands" in cmd
+        assert "--no-chrome" in cmd
+        assert "--setting-sources" in cmd
+        assert cmd[cmd.index("--setting-sources") + 1] == "local"
         # Default tools="" -> empty tools flag present
         assert "--tools" in cmd
         tools_idx = cmd.index("--tools")
@@ -318,6 +342,23 @@ class TestCommandBuilding:
             generate(prompt="ping", project="testproj", tools=None)
 
         assert "--tools" not in captured["cmd"]
+
+    def test_minimal_headless_can_be_disabled(self, tmp_cost_log):
+        response = _single_model_response()
+        captured = {}
+
+        def _fake_run(cmd, **kw):
+            captured["cmd"] = cmd
+            return _completed(json.dumps(response))
+
+        with patch.object(subprocess, "run", side_effect=_fake_run):
+            generate(prompt="ping", project="testproj", minimal_headless=False)
+
+        cmd = captured["cmd"]
+        assert "--strict-mcp-config" not in cmd
+        assert "--mcp-config" not in cmd
+        assert "--disable-slash-commands" not in cmd
+        assert "--setting-sources" not in cmd
 
     def test_schema_becomes_json_schema_flag(self, tmp_cost_log):
         response = _single_model_response(structured_output={"ok": True})
@@ -440,7 +481,10 @@ class TestGenerateParallel:
 # ---------------------------------------------------------------------------
 
 
-@pytest.mark.skipif(shutil.which("claude") is None, reason="claude CLI not installed")
+@pytest.mark.skipif(
+    shutil.which("claude") is None or os.environ.get("LIMBIC_LIVE_CLAUDE") != "1",
+    reason="live Claude CLI smoke test is opt-in with LIMBIC_LIVE_CLAUDE=1",
+)
 def test_live_smoke_single_call(tmp_cost_log):
     """Hit the real CLI end-to-end. Skipped if `claude` is not on PATH."""
     result, meta = generate(
