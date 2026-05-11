@@ -68,7 +68,7 @@ vecs = model.embed_batch(["claim 1", "claim 2", "claim 3"])       # -> np.ndarra
 
 Off-the-shelf embeddings put everything in a narrow cone — unrelated texts in the same domain score 0.7+ cosine similarity, making it hard to distinguish "similar" from "identical." Whitening spreads the distribution.
 
-**When to whiten:** Your corpus is domain-focused (all about education, all about medicine, etc.) and raw embeddings don't separate well. Confirmed across Experiments 2, 11, 12, and the Karpathy loop (Experiment 8: 120 configurations, current defaults rank 1/120).
+**When to whiten:** Your corpus is domain-focused (all about education, all about medicine, etc.) and raw embeddings don't separate well. **In practice, this means almost always for single-domain corpora** — without whitening, clustering thresholds below ~0.90 produce excessive false positives, and novelty scores compress into a meaningless 0.3–0.5 band. Confirmed across Experiments 2, 11, 12, and the Karpathy loop (Experiment 8: 120 configurations, current defaults rank 1/120). Validated on 27K education claims and 6.5K political proposals.
 
 **When NOT to whiten:** Your corpus is diverse (mixed domains). Whitening raises the unrelated floor without proportionally raising related — net negative. Experiment 2 confirmed this: raw embeddings have the best discrimination gap on diverse data.
 
@@ -90,16 +90,24 @@ vec = model.embed("now whitened")  # still 384-dim, much better separation
 # After whitening:  mean pairwise cosine ~0.24
 ```
 
+### Genericization (pre-embedding text normalization)
+
+Strips numbers, dates, currencies, and URLs before embedding. Use when texts contain variable specifics around the same argument (e.g., "allocate 50M" vs "allocate 200M", "Oslo kommune" vs "Bergen kommune", "§ 2-3" vs "§ 1-1"). +14% accuracy on number/date-heavy text, no effect on proper nouns (Experiment 7).
+
+```python
+model = EmbeddingModel(genericize=True)
+
+# Combine with whitening for domain-focused corpora (recommended):
+model = EmbeddingModel(genericize=True, whiten_epsilon=0.1)
+```
+
+Skip when proper nouns carry real semantic signal (e.g., comparing claims *about* different people).
+
 ### Other embedding features
 
 ```python
 # Matryoshka truncation (reduce dimensions for speed/storage)
 model = EmbeddingModel(truncate_dim=256)
-
-# Text genericization (strip numbers, dates, URLs before embedding)
-# Prevents "2024" and "$1.5M" from dominating similarity
-model = EmbeddingModel(genericize=True)
-# +14% accuracy on number/date-heavy text, no effect on proper nouns (Experiment 7)
 
 # Persistent embedding cache (survives restarts)
 model = EmbeddingModel(cache_path="embeddings.db")
@@ -273,6 +281,18 @@ result = classify_pairs_with_confidence(pairs, texts,
 # Format for evaluation harness
 eval_data = format_for_eval_harness(result)
 ```
+
+### Choosing a threshold
+
+The right threshold depends on whether you've whitened your embeddings:
+
+| Corpus state | Threshold | Rationale |
+|---|---|---|
+| Raw embeddings, diverse corpus | 0.70–0.75 | Embeddings already spread well across domains |
+| Raw embeddings, domain-focused | 0.90+ | Narrow similarity cone — lower thresholds group everything |
+| **Whitened embeddings** (recommended) | **0.85** | Whitening restores meaningful spread |
+
+If your largest cluster has 50+ members, your threshold is too low or you need whitening. Always LLM-validate a sample of cluster pairs before using results downstream.
 
 ### Design decisions
 

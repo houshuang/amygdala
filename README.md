@@ -123,6 +123,44 @@ hybrid = HybridSearch(vector_index=index, fts_index=fts)
 results = hybrid.search(model.embed("school funding"), "school funding", limit=5)
 ```
 
+### Recipe: Analyze a corpus of responses
+
+A common task: you have 50–500 texts (policy responses, reviews, survey answers) and want to find shared arguments, unique insights, and contradictions. This pipeline chains embedding, whitening, clustering, and novelty detection:
+
+```python
+from limbic.amygdala import (
+    EmbeddingModel, VectorIndex, greedy_centroid_cluster,
+    batch_novelty, pairwise_cosine, extract_pairs, classify_pairs,
+)
+
+# 1. Embed with domain-appropriate settings
+#    genericize=True strips numbers/dates that poison similarity
+#    whiten_epsilon=0.1 spreads the narrow embedding cone (essential for domain corpora)
+model = EmbeddingModel(genericize=True, whiten_epsilon=0.1, cache_path="cache.db")
+texts = [claim["text"] for claim in claims]
+model.fit_whitening(texts)
+vecs = model.embed_batch(texts)
+
+# 2. Cluster to find shared arguments (0.85 threshold after whitening)
+clusters = greedy_centroid_cluster(vecs, threshold=0.85)
+# Each cluster = group of claims making ~the same argument
+# Count distinct sources per cluster → "how many respondents say this?"
+
+# 3. Score novelty per claim
+index = VectorIndex()
+index.add([str(i) for i in range(len(vecs))], vecs)
+scores = batch_novelty(vecs, index)
+# 0.0 = everyone says this, 1.0 = only this source says it
+# Aggregate per source to rank "who brings the most novel arguments?"
+
+# 4. Find contradictions (cosine can't distinguish agree vs disagree)
+pairs = extract_pairs(pairwise_cosine(vecs), threshold=0.72)
+classified = classify_pairs(texts, pairs)
+# Returns KNOWN (paraphrase), NEW (contradiction), EXTENDS (elaboration)
+```
+
+See also the [entity dedup recipe](#deduplication-with-veto-gates) in limbic.hippocampus and the [batch verification recipe](#quick-start-batch-processing) in limbic.cerebellum.
+
 ### Embedding and whitening
 
 The default model is `paraphrase-multilingual-MiniLM-L12-v2` (384 dimensions). Chosen over `all-MiniLM-L6-v2` based on experiments:
@@ -160,7 +198,28 @@ Three whitening modes, all opt-in:
 | **All-but-the-top** | `EmbeddingModel(whiten_abt=1)` | +27% NN-gap, simpler math | When you don't want to tune epsilon |
 | **PCA** | `EmbeddingModel(whiten_dims=128)` | +24% NN-gap, reduces dims | When you need dimensionality reduction |
 
+**Rule of thumb:** If your corpus is domain-focused (all about education, all about medicine, all about politics), **always whiten**. Without whitening, clustering thresholds below ~0.90 produce excessive false positives — a 0.70 threshold on raw domain embeddings groups nearly everything together. After whitening, 0.85 is a reliable starting threshold. Validated on 27K education claims (otak) and 6.5K political proposals (MDG).
+
 **Don't whiten diverse corpora.** On mixed-domain data, raw embeddings already separate well. Whitening helps when your entire corpus is about one field and everything looks the same to the model. The Karpathy-loop experiment (120 configs) confirmed: **current defaults are rank 1/120** — whitening is the biggest anti-pattern on diverse data.
+
+#### Genericization (pre-embedding text normalization)
+
+Strips numbers, dates, currencies, and URLs before embedding. Use when your texts contain variable specifics around the same argument:
+
+- **Policy/finance:** "allocate 50M" vs "allocate 200M" → same argument, different amount
+- **Municipal/regional:** "Oslo kommune" vs "Bergen kommune" → same proposal, different place
+- **Legal/regulatory:** "§ 2-3" vs "§ 1-1" → same type of reference, different section
+
+```python
+model = EmbeddingModel(genericize=True)
+# +14% accuracy on number/date-heavy text, no effect on proper nouns (Experiment 7)
+```
+
+Skip when proper nouns carry real semantic signal (e.g., comparing claims *about* different people). Combine with whitening for domain-focused corpora:
+
+```python
+model = EmbeddingModel(genericize=True, whiten_epsilon=0.1)
+```
 
 #### Other embedding features
 
@@ -169,11 +228,6 @@ from limbic.amygdala import EmbeddingModel
 
 # Matryoshka truncation (reduce dimensions for speed/storage)
 model = EmbeddingModel(truncate_dim=256)
-
-# Text genericization (strip numbers, dates, URLs before embedding)
-# Prevents "2024" and "$1.5M" from dominating similarity
-model = EmbeddingModel(genericize=True)
-# +14% accuracy on number/date-heavy text, no effect on proper nouns
 
 # Persistent embedding cache (survives restarts)
 model = EmbeddingModel(cache_path="embeddings.db")
@@ -347,7 +401,19 @@ pairs = extract_pairs(sim_matrix, threshold=0.7,
                       cross_group_only=True)
 ```
 
-**Why greedy centroid over union-find?** Union-find causes transitive chaining — at threshold 0.85, it produces clusters of 1,500+ items. Greedy centroid caps naturally at ~50. Discovered this empirically when clustering 27K claims in alif.
+#### Choosing a threshold
+
+The right threshold depends on whether you've whitened your embeddings:
+
+| Corpus state | Threshold | Rationale |
+|---|---|---|
+| Raw embeddings, diverse corpus | 0.70–0.75 | Embeddings already spread well across domains |
+| Raw embeddings, domain-focused | 0.90+ | Narrow similarity cone — lower thresholds group everything |
+| **Whitened embeddings** (recommended) | **0.85** | Whitening restores meaningful spread |
+
+If your largest cluster has 50+ members, your threshold is too low or you need whitening. Always validate a sample of cluster pairs with an LLM before using results downstream (~$0.001/pair with Gemini Flash).
+
+**Why greedy centroid over union-find?** Union-find causes transitive chaining — at threshold 0.85, it produces clusters of 1,500+ items. Greedy centroid caps naturally at ~50. Discovered this empirically when clustering 27K claims.
 
 **Why not HDBSCAN?** Both tested. Similar V-measure (~0.55) on 20 Newsgroups. Both are designed for dedup, not topic discovery. Greedy centroid is simpler, needs no hyperparameter tuning, and works incrementally.
 
@@ -757,7 +823,7 @@ total = sum(r.cost_usd for r in records)
 # python -m limbic.cerebellum.cost_log sync --host alif
 ```
 
-DB location: `COST_LOG_DB` env var or `~/.local/share/limbic/llm_costs.db`. Includes a web dashboard, remote sync from servers, and CLI reporting.
+DB location: `COST_LOG_DB` env var or `~/.local/share/limbic/llm_costs.db`. Includes a web dashboard (`python -m limbic.cerebellum.cost_log dashboard`, port 8042) that splits API spend (billed) from Claude CLI usage (Max-plan subscription value), remote sync from servers, and CLI reporting.
 
 ### Context builder
 
@@ -809,6 +875,26 @@ Every significant design choice in limbic.amygdala was tested in controlled expe
 | 23 | Knowledge map: best propagator × strategy? | **Bayesian + EIG** best overall (avg 7.2 Q→80%). Bayesian 42% faster than heuristic on chains. Post-hoc foil calibration doesn't help; Bayesian constraint propagation is the primary overclaiming defense. Batch probing maintains efficiency (5 Qs in 1 round = same as sequential). | 5 topologies × 50 trials |
 
 Experiment code is in the `experiments/` directory if you want to reproduce or extend them.
+
+## Common pitfalls
+
+**"My clusters are huge (50+ members)"**
+Your threshold is too low, or you're using raw embeddings on domain-focused text. Whiten first (`whiten_epsilon=0.1`), then cluster at 0.85.
+
+**"Everything scores 0.7+ similarity"**
+Domain-focused corpus without whitening. The narrow embedding cone compresses all scores into a band. Use `EmbeddingModel(whiten_epsilon=0.1)` and `fit_whitening(corpus)`.
+
+**"Novelty scores are all 0.3–0.5 with no spread"**
+Same cause as above — whitening spreads the distribution so novelty scores become meaningful. Also consider `use_centroid_specificity=True` for an additional +17% separation.
+
+**"Cosine says two opposite claims are highly similar"**
+Expected behavior — cosine measures *topical* similarity, not agreement. Two claims about the same topic that say opposite things will score high. Use `classify_pairs()` or `nli_classify()` to distinguish agree/disagree/extend.
+
+**"NLI says 'contradiction' on paraphrases"**
+Cross-encoder is noisy below 0.72 cosine. The default `classify_pairs()` cascade only runs NLI on high-cosine pairs to avoid this. Don't lower the threshold.
+
+**"I'm getting different clusters on the same data"**
+`IncrementalCentroidCluster` is order-sensitive at thresholds below 0.85 (Experiment 18). Use `greedy_centroid_cluster()` (batch mode) for reproducible results, or raise the threshold.
 
 ## Architecture
 

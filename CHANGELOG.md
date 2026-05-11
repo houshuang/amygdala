@@ -4,6 +4,17 @@ All notable changes to the limbic monorepo (formerly amygdala) are documented he
 
 ---
 
+## 2026-04-17 -- Cost dashboard surfaces CLI subscription value
+
+### Changed
+- **Whole-dollar formatting** in the cost dashboard. `fmt()` and the daily-chart y-axis now use `Math.round` instead of `toFixed(4)` / `toFixed(2)`, with locale comma separators (e.g. `$13` not `$13.8257`).
+- **CLI section now shows cost.** Previously CLI tables hid `cost_usd` (rendering `-` in the recent-calls panel and omitting the column entirely from the by-project / by-model panels). The data was already logged but invisible — making heavy CLI users (e.g. alif at ~$272/wk subscription value) appear as "0 usage". CLI totals add a "Subscription Value" card; CLI by-project / by-model add a "Sub Value" column and sort by cost.
+- CLI by-project / by-model SQL `ORDER BY` switched from `total_tokens` to `cost_usd` so the ordering matches the new primary column.
+
+### Added
+- `cli.cost_usd` field in the `/api/summary` response (sum of `cost_usd` across `script='claude-cli'` rows).
+- `cost_usd` field in each row of `cli.by_project` and `cli.by_model`.
+
 ## 2026-03-26 -- Search improvements from claude-chat-search integration
 
 ### Fixed
