@@ -18,6 +18,13 @@ from .claude_cli import (
     generate_parallel as claude_generate_parallel,
     is_available as claude_is_available,
 )
+from .codex_cli import (
+    CodexCLIError,
+    codex_json,
+    codex_research,
+    strict_response_schema as codex_strict_response_schema,
+    is_available as codex_is_available,
+)
 
 __all__ = [
     "BatchState",
@@ -47,4 +54,9 @@ __all__ = [
     "claude_generate",
     "claude_generate_parallel",
     "claude_is_available",
+    "CodexCLIError",
+    "codex_json",
+    "codex_research",
+    "codex_strict_response_schema",
+    "codex_is_available",
 ]
