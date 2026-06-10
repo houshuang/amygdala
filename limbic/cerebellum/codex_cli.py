@@ -174,8 +174,14 @@ def _run(cmd: list[str], timeout: int) -> subprocess.CompletedProcess:
 
 def _finish(proc: subprocess.CompletedProcess, output_path: str | None, schema: dict | None) -> Any:
     if proc.returncode != 0:
-        err = (proc.stderr or "")[:400]
-        mark_unavailable_from_error(err)
+        full = (proc.stderr or "") or (proc.stdout or "")
+        mark_unavailable_from_error(full)
+        err = full.strip()
+        # codex exec opens stderr with its banner (and a harmless "Reading
+        # additional input from stdin..." whenever stdin isn't a TTY); the fatal
+        # error is at the END — keep the tail, not just the head.
+        if len(err) > 700:
+            err = err[:200] + " […] " + err[-500:]
         raise CodexCLIError(f"codex CLI exit {proc.returncode}: {err}")
     text = ""
     if output_path:
@@ -191,6 +197,30 @@ def _finish(proc: subprocess.CompletedProcess, output_path: str | None, schema: 
     if parsed is None:
         raise CodexCLIError(f"codex CLI returned unparseable JSON: {text[:300]}")
     return parsed
+
+
+RETRIES = int(os.environ.get("LIMBIC_CODEX_RETRIES", "1"))
+
+
+def _is_transient(err: CodexCLIError) -> bool:
+    msg = str(err)
+    if _is_quota_error(msg):
+        return False
+    return "codex CLI exit" in msg or "unparseable JSON" in msg
+
+
+def _exec(cmd: list[str], timeout: int, output_path: str | None, schema: dict | None) -> Any:
+    """Run + parse with automatic retry on transient failures (a flaky `codex exec`
+    non-zero exit or garbled output). Quota errors and timeouts do NOT retry: quota
+    needs its cooldown, and a timeout retry would double the stage's worst case.
+    """
+    for attempt in range(RETRIES + 1):
+        try:
+            return _finish(_run(cmd, timeout), output_path, schema)
+        except CodexCLIError as e:
+            if attempt >= RETRIES or not _is_transient(e):
+                raise
+            time.sleep(5 * (attempt + 1))
 
 
 def codex_json(
@@ -221,7 +251,7 @@ def codex_json(
                 schema_path = sf.name
             cmd += ["--output-schema", schema_path]
         cmd.append(f"{system}\n\n{prompt}" if system else prompt)
-        return _finish(_run(cmd, timeout), output_path, schema)
+        return _exec(cmd, timeout, output_path, schema)
     finally:
         for p in (schema_path, output_path):
             if p:
@@ -275,7 +305,7 @@ def codex_research(
                 schema_path = sf.name
             cmd += ["--output-schema", schema_path]
         cmd.append(mission)
-        return _finish(_run(cmd, timeout), output_path, schema)
+        return _exec(cmd, timeout, output_path, schema)
     finally:
         for p in (schema_path, output_path):
             if p:

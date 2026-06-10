@@ -558,3 +558,55 @@ class TestEscalationPreservesContext:
         assert state.items["item1"]["confidence"] == 0.45
         assert state.items["item1"]["findings"] == ["suspicious attribution"]
         assert state.items["item1"]["tier"] == "fast"
+
+
+class TestCodexCLIRetry:
+    """_exec retries transient failures once; quota and timeout don't retry."""
+
+    def _proc(self, rc=1, stderr="", stdout=""):
+        import subprocess
+        return subprocess.CompletedProcess(args=["codex"], returncode=rc,
+                                           stdout=stdout, stderr=stderr)
+
+    def test_transient_exit_retries_then_succeeds(self, monkeypatch):
+        from limbic.cerebellum import codex_cli as cc
+        calls = []
+        procs = [self._proc(rc=1, stderr="banner\nboom"), self._proc(rc=0, stdout="ok")]
+        monkeypatch.setattr(cc, "_run", lambda cmd, timeout: calls.append(1) or procs[len(calls) - 1])
+        monkeypatch.setattr(cc.time, "sleep", lambda s: None)
+        assert cc._exec(["codex"], 10, None, None) == "ok"
+        assert len(calls) == 2
+
+    def test_quota_error_does_not_retry(self, monkeypatch):
+        from limbic.cerebellum import codex_cli as cc
+        calls = []
+        monkeypatch.setattr(cc, "_run",
+                            lambda cmd, timeout: calls.append(1) or self._proc(rc=1, stderr="usage limit reached"))
+        monkeypatch.setattr(cc, "_DISABLED_UNTIL", 0.0)
+        with pytest.raises(cc.CodexCLIError):
+            cc._exec(["codex"], 10, None, None)
+        assert len(calls) == 1
+        assert cc.temporarily_disabled()
+        monkeypatch.setattr(cc, "_DISABLED_UNTIL", 0.0)
+
+    def test_timeout_does_not_retry(self, monkeypatch):
+        from limbic.cerebellum import codex_cli as cc
+        calls = []
+
+        def _run(cmd, timeout):
+            calls.append(1)
+            raise cc.CodexCLIError("codex CLI timed out after 10s")
+
+        monkeypatch.setattr(cc, "_run", _run)
+        with pytest.raises(cc.CodexCLIError, match="timed out"):
+            cc._exec(["codex"], 10, None, None)
+        assert len(calls) == 1
+
+    def test_error_keeps_stderr_tail(self, monkeypatch):
+        from limbic.cerebellum import codex_cli as cc
+        banner = "Reading additional input from stdin...\n" + "x" * 800
+        stderr = banner + "\nFATAL: the real reason"
+        monkeypatch.setattr(cc, "RETRIES", 0)
+        monkeypatch.setattr(cc, "_run", lambda cmd, timeout: self._proc(rc=1, stderr=stderr))
+        with pytest.raises(cc.CodexCLIError, match="the real reason"):
+            cc._exec(["codex"], 10, None, None)
