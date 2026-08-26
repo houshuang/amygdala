@@ -267,6 +267,7 @@ def codex_research(
     schema: dict | None = None,
     scratch_dir: str | None = None,
     add_dirs: list[str] | None = None,
+    images: list[str] | None = None,
     model: str | None = None,
     reasoning: str | None = None,
     timeout: int = 900,
@@ -281,6 +282,12 @@ def codex_research(
     ``schema`` given) or text. If ``scratch_dir`` is given, Codex runs there and
     may write files; pass ``add_dirs`` for extra writable roots (e.g. a project
     ``data/`` dir).
+
+    ``images`` attaches local image files to the initial prompt (``codex exec -i``),
+    which is the only way the model sees pixels: a path in the prompt text is just
+    text. Callers own the files and their lifetime — pass paths inside the same
+    short-lived workspace, and remember an attached image is untrusted input that
+    can carry rendered instructions.
     """
     schema_path = output_path = None
     try:
@@ -299,6 +306,11 @@ def codex_research(
             cmd += ["-C", scratch_dir, "--add-dir", scratch_dir]
         for d in (add_dirs or []):
             cmd += ["--add-dir", d]
+        for image in (images or []):
+            path = Path(image)
+            if not path.is_file():
+                raise CodexCLIError(f"codex image attachment is not a file: {image}")
+            cmd += ["-i", str(path)]
         if schema is not None:
             with tempfile.NamedTemporaryFile("w", suffix=".schema.json", delete=False) as sf:
                 json.dump(strict_response_schema(schema), sf, ensure_ascii=False)
