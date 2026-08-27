@@ -4,6 +4,37 @@ All notable changes to the limbic monorepo (formerly amygdala) are documented he
 
 ---
 
+## 2026-06-18 -- Serendipity link-finder
+
+### Added
+- **`limbic.amygdala.serendipity`** — surfaces useful but *non-obvious* document
+  links (the objective relevance/precision can't capture). `serendipity_pairs`
+  ranks pairs in an inverted-U similarity "sweet spot" (related but not
+  duplicate/unrelated), with a cross-facet bonus (source/era/domain) so links you
+  wouldn't manually make score highest. `abc_bridges` does Swanson ABC bridging
+  (transitive A–C links via a shared intermediate B). Bands are embedding-space
+  dependent — calibrate to the model / use whitening. Tests in
+  `tests/test_serendipity.py`.
+
+## 2026-06-18 -- Retrieval evaluation harness
+
+### Added
+- **`limbic.amygdala.retrieval_eval`** — the IR-evaluation loop amygdala lacked.
+  `calibrate` validated an LLM *judge* against humans, but nothing scored
+  *retrieval*. New module adds:
+  - Graded metrics: `ndcg`, `recall`, `mrr`, `average_precision` (2^g-1 gain,
+    `rel_threshold` binarisation for recall/MRR/MAP).
+  - `pool(runs, depth)` — union of competing methods' top-`depth` results so no
+    method is penalised for surfacing a good doc the others missed.
+  - `judge_pool(...)` — backend-agnostic graded judging (inject any
+    `judge_fn(query, doc) -> grade`: LLM, Codex, human, heuristic), incremental/
+    resumable so enlarging the pool only judges new pairs.
+  - `make_llm_judge(...)` — default judge over `limbic.amygdala.llm`.
+  - `score(runs, qrels, strata=...)` + `format_report(...)` — per-method and
+    per-stratum (e.g. query-category) breakdown.
+  - Composes with `calibrate.validate_llm_judge` to check the judge against a
+    human-labelled subset. Tests in `tests/test_retrieval_eval.py`.
+
 ## 2026-04-17 -- Cost dashboard surfaces CLI subscription value
 
 ### Changed

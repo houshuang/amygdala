@@ -224,6 +224,40 @@ def dedup_by(results: list[Result], key_fn: Callable[[Result], str]) -> list[Res
     return list(seen.values())
 
 
+def type_diversity_cap(results: list[Result], key_fn: Callable[[Result], str],
+                       max_fraction: float = 0.6, k: int | None = None) -> list[Result]:
+    """Re-rank so no single facet dominates the top-k.
+
+    Caps each group (``key_fn``, e.g. source type / domain / author) to at most
+    ``ceil(max_fraction * k)`` slots in the returned top-k; over-cap items are
+    deferred and only backfill if the result would otherwise be short. Preserves
+    relative order within what's kept. Counters the failure mode where one prolix
+    source crowds out a balanced answer (cf. the "no type > X% of results" rule).
+
+    Assumes ``results`` are already sorted by score descending.
+    """
+    import math
+    k = k or len(results)
+    max_per = max(1, math.ceil(max_fraction * k))
+    out: list[Result] = []
+    deferred: list[Result] = []
+    counts: dict[str, int] = {}
+    for r in results:
+        if len(out) >= k:
+            break
+        key = key_fn(r)
+        if counts.get(key, 0) < max_per:
+            out.append(r)
+            counts[key] = counts.get(key, 0) + 1
+        else:
+            deferred.append(r)
+    for r in deferred:               # backfill only if we came up short
+        if len(out) >= k:
+            break
+        out.append(r)
+    return out[:k]
+
+
 _rerank_cache: dict[str, "CrossEncoder"] = {}
 
 
