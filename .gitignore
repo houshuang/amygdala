@@ -7,3 +7,4 @@ build/
 .pytest_cache/
 .local/
 .claude/
+.DS_Store
