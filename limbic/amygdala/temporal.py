@@ -35,6 +35,19 @@ import re
 from dataclasses import dataclass
 
 
+# The 2012 EDTF draft wrote unspecified digits as lowercase "u" ("19uu") or "x";
+# ratified EDTF (ISO 8601-2:2019) uses uppercase "X" ("19XX") and the `edtf`
+# package only accepts that. Archive data predates the change often enough that
+# both spellings have to work, so normalize date-shaped tokens before parsing.
+_LEGACY_UNSPECIFIED = re.compile(r"^-?[0-9uxUX]{4}(?:-[0-9uxUX]{2}){0,2}[?~%]*$")
+
+
+def _normalize_edtf_wildcards(text: str) -> str:
+    if _LEGACY_UNSPECIFIED.match(text):
+        return re.sub(r"[ux]", "X", text)
+    return text
+
+
 def _try_parse_edtf(text: str):
     """Attempt to parse text as EDTF. Returns EDTF object or None.
 
@@ -47,7 +60,7 @@ def _try_parse_edtf(text: str):
     except ImportError:
         return None
     try:
-        return parse_edtf(text)
+        return parse_edtf(_normalize_edtf_wildcards(text))
     except Exception:
         return None
 
@@ -160,7 +173,11 @@ def parse_date(text: str) -> DateRange | None:
         try:
             lo = edtf_obj.lower_strict().tm_year
             hi = edtf_obj.upper_strict().tm_year
-            return DateRange(start=lo, end=hi, original=t)
+            # EDTF qualifiers: "?" uncertain, "~" approximate, "%" both.
+            qualifier = t[len(t.rstrip("?~%")):]
+            return DateRange(start=lo, end=hi, original=t,
+                             approximate="~" in qualifier or "%" in qualifier,
+                             uncertain="?" in qualifier or "%" in qualifier)
         except Exception:
             pass
 

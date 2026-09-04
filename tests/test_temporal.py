@@ -255,6 +255,41 @@ def test_edtf_approximate_year_parses_when_available():
     assert dr.start == 1942
 
 
+def test_edtf_ratified_unspecified_spelling_parses():
+    """Ratified EDTF (ISO 8601-2:2019) spells unspecified digits with uppercase X."""
+    import pytest
+    pytest.importorskip("edtf")
+    dr = parse_date("19XX")
+    assert dr is not None
+    assert (dr.start, dr.end) == (1900, 1999)
+
+
+def test_edtf_legacy_wildcards_normalize_at_decade_precision():
+    """'196x' is 2012-draft spelling for the 1960s."""
+    import pytest
+    pytest.importorskip("edtf")
+    dr = parse_date("196x")
+    assert dr is not None
+    assert (dr.start, dr.end) == (1960, 1969)
+
+
+def test_edtf_qualifiers_set_precision_flags():
+    """EDTF '?' is uncertain, '~' approximate, '%' both."""
+    import pytest
+    pytest.importorskip("edtf")
+    assert (parse_date("1942?").uncertain, parse_date("1942?").approximate) == (True, False)
+    assert (parse_date("1942~").uncertain, parse_date("1942~").approximate) == (False, True)
+    assert (parse_date("1942%").uncertain, parse_date("1942%").approximate) == (True, True)
+
+
+def test_non_edtf_text_is_untouched_by_wildcard_normalization():
+    """Normalization must only fire on date-shaped tokens."""
+    dr = parse_date("1960s")
+    assert (dr.start, dr.end) == (1960, 1969)
+    assert parse_date("circa 942").approximate is True
+    assert parse_date("not a date") is None
+
+
 def test_daterange_dataclass_equality_differs_from_allen_equals():
     """Document the intentional asymmetry: Allen equals ignores metadata; == does not."""
     a = DateRange(start=942, end=996)

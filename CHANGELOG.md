@@ -4,6 +4,19 @@ All notable changes to the limbic monorepo (formerly amygdala) are documented he
 
 ---
 
+## 2026-09-04 -- EDTF wildcard spellings and qualifier flags in temporal
+
+### Fixed
+- **`parse_date` rejected 2012-draft EDTF wildcards.** The draft spelled
+  unspecified digits lowercase (`19uu`, `196x`); ratified EDTF (ISO 8601-2:2019)
+  uses uppercase `X`, and the `edtf` package only accepts that. Archive data
+  predates the change often enough that both have to work, so date-shaped tokens
+  are normalized before parsing. `test_edtf_uncertain_decade_parses_when_available`
+  had been failing on this.
+- **`DateRange.uncertain` was never set by anything.** The EDTF path now maps the
+  qualifier suffix onto the precision flags: `?` uncertain, `~` approximate,
+  `%` both — matching how the regex path already sets `approximate` for "circa".
+
 ## 2026-09-04 -- Current-generation model support in amygdala.llm
 
 ### Added
