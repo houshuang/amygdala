@@ -4,6 +4,36 @@ All notable changes to the limbic monorepo (formerly amygdala) are documented he
 
 ---
 
+## 2026-09-04 -- Current-generation model support in amygdala.llm
+
+### Added
+- **GPT-5.6 tiers** in `MODELS`: `luna` (gpt-5.6-luna), `terra` (gpt-5.6-terra),
+  `sol` (gpt-5.6-sol), plus `gpt55`, `gpt54-mini`, `gpt54-nano`.
+- **Gemini 3.x**: `gemini38-flash`, `gemini35-flash`, `gemini35-flash-lite`,
+  `gemini31-pro`, `gemini31-flash-lite`.
+- **Claude 5**: `opus` (claude-opus-5), `fable` (claude-fable-5-1); `sonnet` now
+  maps to `claude-sonnet-5`.
+- `### LLM client` section in README listing every key, wire id, and price.
+- `tests/test_llm.py` covering the registry, per-provider call shaping, Gemini
+  token accounting, and the fallback path.
+
+### Fixed
+- **OpenAI structured output was broken for every model.** `_call_openai` sent
+  `response_format={"type": "json_object"}` without mentioning JSON in the
+  messages, which the API rejects with a 400 unless the caller's own prompt
+  happened to contain the word. The schema is now appended to the system prompt,
+  which both satisfies that requirement and tells the model what shape to return
+  (previously OpenAI models were asked for JSON with no schema at all).
+- **Gemini thinking tokens were not costed.** `_call_gemini` reported only
+  `candidates_token_count`, but Google bills thinking tokens as output. A 5-token
+  answer with 136 thinking tokens was under-reported ~28x. `output_tokens` now
+  includes `thoughts_token_count`.
+- Stale prices in `MODELS` and `cost_log._FALLBACK_PRICES` (e.g. gemini-3-flash
+  was listed at 0.10/0.40, actually 0.50/3.00; `claude-sonnet-4` is retired on the
+  first-party API; `claude-haiku-4-5-20241022` was never a valid id).
+- `cost_log._fallback_cost` only stripped a `gemini/` prefix, so `openai/…` and
+  `anthropic/…` models never matched the table. It now ignores any provider prefix.
+
 ## 2026-06-18 -- Serendipity link-finder
 
 ### Added

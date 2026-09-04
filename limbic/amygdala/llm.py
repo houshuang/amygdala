@@ -15,16 +15,38 @@ import time
 
 log = logging.getLogger(__name__)
 
+# Prices are USD per 1M tokens, standard (non-batch) tier.
+# Gemini output_price covers thinking tokens; OpenAI output_price covers reasoning tokens.
 MODELS = {
-    "gemini3-flash": {"provider": "gemini", "id": "gemini-3-flash-preview", "input_price": 0.10, "output_price": 0.40},
-    "gemini25-flash": {"provider": "gemini", "id": "gemini-2.5-flash", "input_price": 0.15, "output_price": 0.60},
+    "gemini38-flash": {"provider": "gemini", "id": "gemini-3.8-flash", "input_price": 0.75, "output_price": 3.75},
+    "gemini35-flash": {"provider": "gemini", "id": "gemini-3.5-flash", "input_price": 1.50, "output_price": 9.0},
+    "gemini35-flash-lite": {"provider": "gemini", "id": "gemini-3.5-flash-lite", "input_price": 0.30, "output_price": 2.50},
+    "gemini31-pro": {"provider": "gemini", "id": "gemini-3.1-pro-preview", "input_price": 2.0, "output_price": 12.0},
+    "gemini31-flash-lite": {"provider": "gemini", "id": "gemini-3.1-flash-lite", "input_price": 0.25, "output_price": 1.50},
+    "gemini3-flash": {"provider": "gemini", "id": "gemini-3-flash-preview", "input_price": 0.50, "output_price": 3.0},
+    "gemini25-flash": {"provider": "gemini", "id": "gemini-2.5-flash", "input_price": 0.30, "output_price": 2.50},
     "gemini25-pro": {"provider": "gemini", "id": "gemini-2.5-pro", "input_price": 1.25, "output_price": 10.0},
-    "sonnet": {"provider": "anthropic", "id": "claude-sonnet-4-20250514", "input_price": 3.0, "output_price": 15.0},
+    "fable": {"provider": "anthropic", "id": "claude-fable-5-1", "input_price": 10.0, "output_price": 50.0},
+    "opus": {"provider": "anthropic", "id": "claude-opus-5", "input_price": 5.0, "output_price": 25.0},
+    "sonnet": {"provider": "anthropic", "id": "claude-sonnet-5", "input_price": 2.0, "output_price": 10.0},
     "haiku": {"provider": "anthropic", "id": "claude-haiku-4-5-20251001", "input_price": 1.0, "output_price": 5.0},
+    "sol": {"provider": "openai", "id": "gpt-5.6-sol", "input_price": 4.0, "output_price": 20.0},
+    "terra": {"provider": "openai", "id": "gpt-5.6-terra", "input_price": 2.0, "output_price": 12.0},
+    "luna": {"provider": "openai", "id": "gpt-5.6-luna", "input_price": 0.20, "output_price": 1.20},
+    "gpt55": {"provider": "openai", "id": "gpt-5.5", "input_price": 5.0, "output_price": 30.0},
+    "gpt54-mini": {"provider": "openai", "id": "gpt-5.4-mini", "input_price": 0.75, "output_price": 4.50},
+    "gpt54-nano": {"provider": "openai", "id": "gpt-5.4-nano", "input_price": 0.20, "output_price": 1.25},
     "gpt41-mini": {"provider": "openai", "id": "gpt-4.1-mini", "input_price": 0.40, "output_price": 1.60},
     "gpt41-nano": {"provider": "openai", "id": "gpt-4.1-nano", "input_price": 0.10, "output_price": 0.40},
 }
-FALLBACK = {"gemini3-flash": "gemini25-flash"}
+# Retarget when a model returns unparseable JSON (e.g. reasoning ate the token budget).
+FALLBACK = {
+    "gemini38-flash": "gemini3-flash",
+    "gemini35-flash": "gemini3-flash",
+    "gemini3-flash": "gemini25-flash",
+    "luna": "terra",
+    "sol": "terra",
+}
 MAX_RETRIES, BACKOFF_BASE = 3, 2
 
 # Cost logging (optional)
@@ -60,7 +82,8 @@ def _is_retryable(e):
 async def _call_gemini(model_id, sys, user, schema, max_tok, thinking_budget=None):
     from google import genai
     from google.genai import types as gt
-    client = genai.Client(api_key=os.environ.get("GEMINI_KEY") or os.environ.get("GOOGLE_API_KEY"))
+    client = genai.Client(api_key=os.environ.get("GEMINI_KEY") or os.environ.get("GEMINI_API_KEY")
+                          or os.environ.get("GOOGLE_API_KEY"))
     t0 = time.time()
     cfg = dict(system_instruction=sys, max_output_tokens=max_tok)
     if schema:
@@ -69,8 +92,10 @@ async def _call_gemini(model_id, sys, user, schema, max_tok, thinking_budget=Non
     if thinking_budget is not None:
         cfg["thinking_config"] = gt.ThinkingConfig(thinking_budget=thinking_budget)
     r = await client.aio.models.generate_content(model=model_id, contents=user, config=gt.GenerateContentConfig(**cfg))
-    return {"text": r.text, "input_tokens": r.usage_metadata.prompt_token_count or 0,
-            "output_tokens": r.usage_metadata.candidates_token_count or 0, "duration_s": time.time() - t0}
+    um = r.usage_metadata
+    return {"text": r.text, "input_tokens": um.prompt_token_count or 0,
+            "output_tokens": (um.candidates_token_count or 0) + (getattr(um, "thoughts_token_count", 0) or 0),
+            "duration_s": time.time() - t0}
 
 
 async def _call_anthropic(model_id, sys, user, schema, max_tok, **kw):
@@ -93,6 +118,10 @@ async def _call_openai(model_id, sys, user, schema, max_tok, **kw):
     client = AsyncOpenAI(api_key=os.environ.get("OPENAI_KEY") or os.environ.get("OPENAI_API_KEY"))
     t0 = time.time()
     try:
+        # json_object mode is rejected unless the messages mention JSON, and it does not
+        # enforce a schema, so state both in the system prompt.
+        if schema:
+            sys = f"{sys}\n\nRespond with a valid JSON object matching this schema:\n{json.dumps(schema)}"
         r = await client.chat.completions.create(
             model=model_id, messages=[{"role": "system", "content": sys}, {"role": "user", "content": user}],
             response_format={"type": "json_object"} if schema else None, max_completion_tokens=max_tok)

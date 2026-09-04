@@ -506,6 +506,59 @@ graph = await graph_from_description("Conflict-free replicated data types")
 # -> 15-50 nodes with prerequisites, obscurity levels, descriptions
 ```
 
+### LLM client
+
+`limbic.amygdala.llm` is a thin multi-provider client: `generate` for text,
+`generate_structured` for JSON (plus `_sync` variants). Models are addressed by
+short key, not wire id — `generate_structured(..., model="luna")` — and only keys
+present in `MODELS` are accepted.
+
+| Key | Wire id | $/M in | $/M out |
+|---|---|---|---|
+| `gemini38-flash` | gemini-3.8-flash | 0.75 | 3.75 |
+| `gemini35-flash` | gemini-3.5-flash | 1.50 | 9.00 |
+| `gemini35-flash-lite` | gemini-3.5-flash-lite | 0.30 | 2.50 |
+| `gemini31-pro` | gemini-3.1-pro-preview | 2.00 | 12.00 |
+| `gemini31-flash-lite` | gemini-3.1-flash-lite | 0.25 | 1.50 |
+| `gemini3-flash` *(default)* | gemini-3-flash-preview | 0.50 | 3.00 |
+| `gemini25-flash` | gemini-2.5-flash | 0.30 | 2.50 |
+| `gemini25-pro` | gemini-2.5-pro | 1.25 | 10.00 |
+| `fable` | claude-fable-5-1 | 10.00 | 50.00 |
+| `opus` | claude-opus-5 | 5.00 | 25.00 |
+| `sonnet` | claude-sonnet-5 | 2.00 | 10.00 |
+| `haiku` | claude-haiku-4-5-20251001 | 1.00 | 5.00 |
+| `sol` | gpt-5.6-sol | 4.00 | 20.00 |
+| `terra` | gpt-5.6-terra | 2.00 | 12.00 |
+| `luna` | gpt-5.6-luna | 0.20 | 1.20 |
+| `gpt55` | gpt-5.5 | 5.00 | 30.00 |
+| `gpt54-mini` | gpt-5.4-mini | 0.75 | 4.50 |
+| `gpt54-nano` | gpt-5.4-nano | 0.20 | 1.25 |
+| `gpt41-mini` | gpt-4.1-mini | 0.40 | 1.60 |
+| `gpt41-nano` | gpt-4.1-nano | 0.10 | 0.40 |
+
+Keys are read from `GEMINI_KEY`/`GOOGLE_API_KEY`, `ANTHROPIC_KEY`/`ANTHROPIC_API_KEY`,
+`OPENAI_KEY`/`OPENAI_API_KEY`.
+
+```python
+from limbic.amygdala.llm import generate_structured_sync
+
+schema = {"type": "object", "properties": {"verdict": {"type": "string"}}}
+result, meta = generate_structured_sync("Is this claim supported?", schema, model="luna")
+print(meta["total_cost_usd"], meta["model"])
+```
+
+Notes:
+
+- **Reasoning/thinking tokens are billed as output** on both Gemini and the
+  GPT-5.x tiers, and `meta["output_tokens"]` includes them. A 5-token answer from
+  `gemini38-flash` can carry 100+ thinking tokens; pass `thinking_budget=0` to
+  suppress it on models that allow it (`gemini31-pro` requires thinking).
+- **A reasoning model can spend its whole `max_tokens` budget thinking** and
+  return an empty string. `FALLBACK` retargets to a second model when the response
+  won't parse as JSON; raise `max_tokens` if you see this often.
+- Structured calls send the schema to every provider, so the model is told what
+  shape to return rather than just "return JSON".
+
 ### SQLite connection helper
 
 ```python

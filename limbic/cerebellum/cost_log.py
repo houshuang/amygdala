@@ -87,25 +87,39 @@ def _detect_host() -> str:
 # ---------------------------------------------------------------------------
 
 # Fallback pricing (USD per 1M tokens) when litellm is not installed.
-# Covers models actively used across projects.  Updated 2026-04.
+# Covers models actively used across projects.  Updated 2026-09.
 _FALLBACK_PRICES: dict[str, tuple[float, float]] = {  # (input/M, output/M)
     "gemini-2.0-flash":           (0.10, 0.40),
     "gemini-2.0-flash-lite":      (0.075, 0.30),
     "gemini-2.5-flash":           (0.30, 2.50),
     "gemini-2.5-flash-lite":      (0.15, 0.60),
     "gemini-2.5-pro":             (1.25, 10.00),
-    "gemini-3-flash-preview":     (0.30, 2.50),
-    "gemini-3.1-flash-lite-preview": (0.15, 0.60),
+    "gemini-3-flash-preview":     (0.50, 3.00),
+    "gemini-3.1-flash-lite":      (0.25, 1.50),
+    "gemini-3.1-pro-preview":     (2.00, 12.00),
+    "gemini-3.5-flash":           (1.50, 9.00),
+    "gemini-3.5-flash-lite":      (0.30, 2.50),
+    "gemini-3.8-flash":           (0.75, 3.75),
+    "claude-fable-5-1":           (10.00, 50.00),
+    "claude-opus-5":              (5.00, 25.00),
+    "claude-sonnet-5":            (2.00, 10.00),
     "claude-sonnet-4-20250514":   (3.00, 15.00),
-    "claude-haiku-4-5-20241022":  (0.80, 4.00),
+    "claude-haiku-4-5-20251001":  (1.00, 5.00),
+    "gpt-5.6-sol":                (4.00, 20.00),
+    "gpt-5.6-terra":              (2.00, 12.00),
+    "gpt-5.6-luna":               (0.20, 1.20),
+    "gpt-5.5":                    (5.00, 30.00),
+    "gpt-5.4-mini":               (0.75, 4.50),
+    "gpt-5.4-nano":               (0.20, 1.25),
+    "gpt-4.1-mini":               (0.40, 1.60),
+    "gpt-4.1-nano":               (0.10, 0.40),
 }
 
 
 def _fallback_cost(model: str, prompt_tokens: int,
                    completion_tokens: int) -> float | None:
-    """Compute cost from built-in price table. Strips gemini/ prefix."""
-    key = model.removeprefix("gemini/")
-    prices = _FALLBACK_PRICES.get(key)
+    """Compute cost from built-in price table. Ignores any provider/ prefix."""
+    prices = _FALLBACK_PRICES.get(model) or _FALLBACK_PRICES.get(model.rsplit("/", 1)[-1])
     if not prices:
         return None
     inp, out = prices
